@@ -14,6 +14,13 @@ server that checks them:
 from justwannabepure import pure, shell, side_effect
 ```
 
+The decorators have no dependencies. The `check` and `server` commands need the
+`tools` extra:
+
+```console
+$ pip install 'justwannabepure[tools]'
+```
+
 Run the language server (stdio) with `uv run pyjustwannabepure server`.
 
 Or run it as a one-shot static analysis (exits 1 if anything is found):

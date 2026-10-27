@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 import pytest
@@ -38,3 +39,28 @@ def test_syntax_error_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     (tmp_path / "bad.py").write_text("def (:\n")
     assert main(["check", str(tmp_path), "--root", str(tmp_path)]) == 1
     assert "syntax error" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("command", "blocked"), [("check", "jedi"), ("server", "pygls")]
+)
+def test_missing_tools_extra(
+    command: str,
+    blocked: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    for name in list(sys.modules):
+        if name.partition(".")[0] == blocked or name.startswith("justwannabepure.lsp"):
+            monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setitem(
+        sys.modules, blocked, None
+    )  # makes `import <blocked>` raise ModuleNotFoundError
+
+    with pytest.raises(SystemExit) as exit_info:
+        main([command, str(tmp_path)] if command == "check" else [command])
+    assert exit_info.value.code == 2
+    err = capsys.readouterr().err
+    assert f"missing dependency '{blocked}'" in err
+    assert "justwannabepure[lsp]" in err

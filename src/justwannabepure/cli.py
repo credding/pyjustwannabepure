@@ -1,4 +1,7 @@
-"""Command-line static analysis: `pyjustwannabepure check [PATH ...]`."""
+"""Command line: `pyjustwannabepure check [PATH ...]` and `pyjustwannabepure server`.
+
+Both commands need the `lsp` extra (jedi, pygls); the decorators themselves do not.
+"""
 
 import argparse
 import sys
@@ -6,6 +9,8 @@ from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 SKIP_DIRS = {"__pycache__", "node_modules", "site-packages", "build", "dist"}
+# Top-level modules installed by the `tools` extra, including transitive ones.
+TOOLS_MODULES = {"jedi", "parso", "pygls", "lsprotocol", "cattrs", "attrs"}
 
 
 def iter_python_files(paths: Sequence[Path]) -> Iterator[Path]:
@@ -70,17 +75,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if args.command == "server":
-        from .lsp.server import main as serve
+    try:
+        if args.command == "server":
+            from .lsp.server import main as serve
 
-        serve()
-        return 0
+            serve()
+            return 0
 
-    root = args.root.resolve()
-    missing = [p for p in args.paths if not p.exists()]
-    if missing:
-        parser.error(f"no such file or directory: {', '.join(map(str, missing))}")
-    return check_paths([p.resolve() for p in args.paths], root)
+        root = args.root.resolve()
+        missing = [p for p in args.paths if not p.exists()]
+        if missing:
+            parser.error(f"no such file or directory: {', '.join(map(str, missing))}")
+        return check_paths([p.resolve() for p in args.paths], root)
+    except ModuleNotFoundError as e:
+        package = (e.name or "").partition(".")[0]
+        if package not in TOOLS_MODULES:
+            raise
+        parser.exit(
+            2,
+            f"pyjustwannabepure {args.command}: missing dependency '{package}'.\n"
+            f"Install the tools extra: pip install 'justwannabepure[lsp]'\n",
+        )
 
 
 if __name__ == "__main__":
