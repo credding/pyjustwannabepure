@@ -14,7 +14,7 @@ from .markers import (
     decorator_marker,
     marked_functions,
 )
-from .resolve import Resolver
+from .resolve import Resolver, marker_table
 
 CONTROL_FLOW: dict[type[ast.stmt], str] = {
     ast.If: "if",
@@ -240,7 +240,7 @@ def check(
         return []
 
     loc = _Locator(source)
-    current = {fn.lineno: markers for fn, markers in functions}
+    current = marker_table(module)
     script = None
     issues: list[Issue] = []
 

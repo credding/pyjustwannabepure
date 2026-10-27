@@ -410,3 +410,62 @@ def test_missing_or_invalid_config_uses_defaults(
     if pyproject is not None:
         (tmp_path / "pyproject.toml").write_text(pyproject)
     assert load_effects(tmp_path) == Effects()
+
+
+def test_open_buffer_edits_invalidate_cached_markers(tmp_path: Path) -> None:
+    effects = tmp_path / "effects.py"
+    effects.write_text(HEADER + "def roll(): ...\n")
+    buffers: dict[Path, str] = {}
+    resolver = Resolver(jedi.Project(tmp_path), buffers.get)
+    source = HEADER + "from effects import roll\n@pure\ndef f():\n    return roll()\n"
+    path = tmp_path / "main.py"
+    path.write_text(source)
+    module = parse(source, path)
+    assert module is not None
+
+    def issues() -> list[tuple[str, int]]:
+        return codes(check(module, source, path, resolver))
+
+    assert issues() == []
+    buffers[effects] = HEADER + "@side_effect\ndef roll(): ...\n"
+    assert issues() == [("JWP002", 4)]
+    buffers[effects] = HEADER + "def roll(): ...\n"
+    assert issues() == []
+
+
+@pytest.mark.parametrize(
+    ("on_disk", "in_buffer", "expected"),
+    [
+        # Lines added above in the unsaved buffer: Jedi still reports the disk lines.
+        (
+            "def roll(): ...\nclass Dice:\n    def roll(self): ...\n",
+            "# new\n\n@side_effect\ndef roll(): ...\nclass Dice:\n    @side_effect\n    def roll(self): ...\n",
+            [("JWP002", 6), ("JWP002", 7)],
+        ),
+        # Jedi's line for `roll` now holds a different, marked function.
+        (
+            "def safe(): ...\ndef roll(): ...\nclass Dice:\n    def roll(self): ...\n",
+            "def safe(): ...\n@side_effect\ndef other(): ...\ndef roll(): ...\nclass Dice:\n    def roll(self): ...\n",
+            [],
+        ),
+    ],
+)
+def test_open_buffer_line_drift(
+    tmp_path: Path, on_disk: str, in_buffer: str, expected: list[tuple[str, int]]
+) -> None:
+    effects = tmp_path / "effects.py"
+    effects.write_text(HEADER + on_disk)
+    resolver = Resolver(jedi.Project(tmp_path), {effects: HEADER + in_buffer}.get)
+    source = HEADER + dedent("""
+    from effects import roll, Dice
+
+    @pure
+    def f(d: Dice):
+        roll()
+        d.roll()
+    """)
+    path = tmp_path / "main.py"
+    path.write_text(source)
+    module = parse(source, path)
+    assert module is not None
+    assert codes(check(module, source, path, resolver)) == expected

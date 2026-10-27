@@ -2,6 +2,7 @@
 
 import ast
 import enum
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 PACKAGE = "justwannabepure"
@@ -58,6 +59,20 @@ def decorator_marker(decorator: ast.expr, aliases: Aliases) -> Marker | None:
 
 def markers_of(fn: FunctionNode, aliases: Aliases) -> set[Marker]:
     return {m for d in fn.decorator_list if (m := decorator_marker(d, aliases))}
+
+
+def qualified_functions(
+    node: ast.AST, prefix: str = ""
+) -> Iterator[tuple[str, FunctionNode]]:
+    """Every function with its dotted path through enclosing classes and functions (`A.B.m`)."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            name = f"{prefix}{child.name}"
+            if not isinstance(child, ast.ClassDef):
+                yield name, child
+            yield from qualified_functions(child, f"{name}.")
+        else:
+            yield from qualified_functions(child, prefix)
 
 
 def marked_functions(
