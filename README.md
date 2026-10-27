@@ -1,4 +1,4 @@
-# pyjustwannabepure
+# justwannabepure
 
 **Functional core, imperative shell — checked by your editor.**
 
@@ -20,20 +20,20 @@ nothing at runtime. All the checking happens statically.
 Add the decorators to your project:
 
 ```console
-$ uv add justwannabepure
+$ uv add pyjustwannabepure
 ```
 
 The checker (the `check` and `server` commands) needs the `lsp` extra. Add it
 as a dev dependency so it lives in your project's venv:
 
 ```console
-$ uv add --dev 'justwannabepure[lsp]'
+$ uv add --dev 'pyjustwannabepure[lsp]'
 ```
 
 Or install it globally as a tool:
 
 ```console
-$ uv tool install 'justwannabepure[lsp]'
+$ uv tool install 'pyjustwannabepure[lsp]'
 ```
 
 ## A quick example
@@ -135,16 +135,16 @@ def main() -> None:
 
 ## Rules
 
-| Code     | Rule                                                                                                 |
-| -------- | ---------------------------------------------------------------------------------------------------- |
-| `JWP001` | `@pure` functions must not be `async`                                                                |
-| `JWP002` | `@pure` functions must not call or pass around `@side_effect` functions                              |
-| `JWP003` | `@shell` functions must not contain `if`/`match`/`try`/`for`/`while`/`raise`/`assert`                |
-| `JWP004` | a function cannot be both `@pure` and `@side_effect`                                                 |
+| Code     | Rule                                                                                                  |
+| -------- | ----------------------------------------------------------------------------------------------------- |
+| `JWP001` | `@pure` functions must not be `async`                                                                 |
+| `JWP002` | `@pure` functions must not call or pass around `@side_effect` functions                               |
+| `JWP003` | `@shell` functions must not contain `if`/`match`/`try`/`for`/`while`/`raise`/`assert`                 |
+| `JWP004` | a function cannot be both `@pure` and `@side_effect`                                                  |
 | `JWP005` | `@pure` functions must not call or pass around known-effectful builtins, stdlib and project functions |
-| `JWP006` | `@pure` functions must not use `global`, or `nonlocal` outside a nested function                     |
-| `JWP007` | `@pure` functions must not mutate their parameters                                                   |
-| `JWP008` | `@pure` functions must not call `@shell` functions                                                   |
+| `JWP006` | `@pure` functions must not use `global`, or `nonlocal` outside a nested function                      |
+| `JWP007` | `@pure` functions must not mutate their parameters                                                    |
+| `JWP008` | `@pure` functions must not call `@shell` functions                                                    |
 
 ### Ignoring a line
 

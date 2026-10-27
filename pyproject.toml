@@ -1,5 +1,5 @@
 [project]
-name = "justwannabepure"
+name = "pyjustwannabepure"
 version = "0.1.0"
 description = "Decorators for pure functions and imperative shells, plus a language server that enforces them"
 readme = "README.md"
@@ -28,3 +28,6 @@ build-backend = "uv_build"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.uv.build-backend]
+module-name = "justwannabepure"

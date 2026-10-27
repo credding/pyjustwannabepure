@@ -63,7 +63,7 @@ def test_missing_lsp_extra(
     assert exit_info.value.code == 2
     err = capsys.readouterr().err
     assert f"missing dependency '{blocked}'" in err
-    assert "justwannabepure[lsp]" in err
+    assert "pyjustwannabepure[lsp]" in err
 
 
 def test_reads_side_effects_from_pyproject(

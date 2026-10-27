@@ -96,7 +96,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.exit(
             2,
             f"pyjustwannabepure {args.command}: missing dependency '{package}'.\n"
-            f"Install the lsp extra: pip install 'justwannabepure[lsp]'\n",
+            f"Install the lsp extra: pip install 'pyjustwannabepure[lsp]'\n",
         )
 
 

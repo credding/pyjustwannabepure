@@ -7,9 +7,9 @@ Install it from Zed with `zed: install dev extension` and pick this directory.
 The extension does not install the server. It looks for it, in order:
 
 1. `lsp.pyjustwannabepure.binary.path` in your Zed settings
-2. `pyjustwannabepure` on your shell's `PATH` (e.g. `uv tool install 'justwannabepure[lsp]'`)
+2. `pyjustwannabepure` on your shell's `PATH` (e.g. `uv tool install 'pyjustwannabepure[lsp]'`)
 3. the active virtualenv (`$VIRTUAL_ENV`)
-4. the project's `.venv`, e.g. after `uv add 'justwannabepure[lsp]'`
+4. the project's `.venv`, e.g. after `uv add 'pyjustwannabepure[lsp]'`
 
 To point Zed at a specific binary, add this to `settings.json`:
 
