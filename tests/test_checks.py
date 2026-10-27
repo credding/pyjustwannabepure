@@ -158,6 +158,57 @@ def test_shell_allowed_constructs(tmp_path: Path) -> None:
     assert run(tmp_path, source) == []
 
 
+@pytest.mark.parametrize(
+    "cases",
+    [
+        "case Ok(value): pass\n        case Err(error): pass",
+        "case Ok(value=v): pass\n        case Err(): pass",
+        "case Ok(Some(v)): pass\n        case Ok(Nothing()): pass",
+        "case Ok() as ok: pass",
+        "case int() | float(): pass",
+        "case None: pass\n        case str(s): pass",
+        "case Ok(v): pass\n        case _: raise ValueError(x)",
+        "case Ok(v): pass\n        case other: raise ValueError(other)",
+    ],
+)
+def test_shell_type_narrowing_match_allowed(tmp_path: Path, cases: str) -> None:
+    assert run(tmp_path, f"@shell\ndef f(x):\n    match x:\n        {cases}\n") == []
+
+
+@pytest.mark.parametrize(
+    "cases",
+    [
+        "case 1: pass",
+        "case Color.RED: pass",
+        "case Ok(v) if v: pass",
+        "case Ok(v): pass\n        case _ if x: pass",
+        "case [a, b]: pass",
+        "case {'k': v}: pass",
+        "case True: pass",
+        "case Point(x=0): pass",
+        "case _: pass\n        case Ok(v): pass",
+    ],
+)
+def test_shell_value_match_flagged(tmp_path: Path, cases: str) -> None:
+    [issue] = run(tmp_path, f"@shell\ndef f(x):\n    match x:\n        {cases}\n")
+    assert issue.code == "JWP003"
+    assert "'match'" in issue.message
+
+
+def test_shell_type_narrowing_match_body_still_checked(tmp_path: Path) -> None:
+    source = """
+    @shell
+    def f(x):
+        match x:
+            case Ok(v):
+                if v:
+                    pass
+    """
+    [issue] = run(tmp_path, source)
+    assert issue.code == "JWP003"
+    assert "'if'" in issue.message
+
+
 def test_non_ascii_columns_are_code_points(tmp_path: Path) -> None:
     source = """
     @side_effect

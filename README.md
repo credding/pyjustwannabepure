@@ -7,7 +7,7 @@ server that checks them:
 |---|---|
 | `JWP001` | `@pure` functions must not be `async` |
 | `JWP002` | `@pure` functions must not call `@side_effect` functions |
-| `JWP003` | `@shell` functions must not contain `if`/`match`/`try`/`for`/`while` |
+| `JWP003` | `@shell` functions must not contain `if`/`match`/`try`/`for`/`while` (a `match` that only narrows types is allowed) |
 | `JWP004` | a function cannot be both `@pure` and `@side_effect` |
 
 ```python

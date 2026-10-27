@@ -79,6 +79,41 @@ def _body_nodes(fn: FunctionNode) -> Iterator[ast.AST]:
         yield from ast.walk(stmt)
 
 
+def _is_capture(pattern: ast.pattern) -> bool:
+    """`_` or a bare name: matches anything."""
+    return isinstance(pattern, ast.MatchAs) and pattern.pattern is None
+
+
+def _is_type_pattern(pattern: ast.pattern) -> bool:
+    """A pattern that only checks types: `Ok(x)`, `Err(error=e)`, `None`, `A() | B()`."""
+    match pattern:
+        case ast.MatchClass(patterns=positional, kwd_patterns=keyword):
+            return all(
+                _is_capture(sub) or _is_type_pattern(sub)
+                for sub in [*positional, *keyword]
+            )
+        case ast.MatchSingleton(value=None):
+            return True
+        case ast.MatchAs(pattern=ast.pattern() as inner):
+            return _is_type_pattern(inner)
+        case ast.MatchOr(patterns=alternatives):
+            return all(_is_type_pattern(alt) for alt in alternatives)
+        case _:
+            return False
+
+
+def _is_type_narrowing(node: ast.Match) -> bool:
+    """Every case narrows by type, except possibly a trailing catch-all."""
+    *cases, last = node.cases
+    if last.guard is not None:
+        return False
+    if not _is_capture(last.pattern):
+        cases.append(last)
+    return bool(cases) and all(
+        case.guard is None and _is_type_pattern(case.pattern) for case in cases
+    )
+
+
 def parse(source: str, path: Path) -> ast.Module | None:
     try:
         return ast.parse(source, filename=str(path))
@@ -138,6 +173,8 @@ def check(
 
         if Marker.SHELL in markers:
             for node in _body_nodes(fn):
+                if isinstance(node, ast.Match) and _is_type_narrowing(node):
+                    continue
                 if keyword := CONTROL_FLOW.get(type(node)):
                     assert isinstance(node, ast.stmt)
                     issues.append(
