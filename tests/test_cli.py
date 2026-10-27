@@ -44,7 +44,7 @@ def test_syntax_error_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
 @pytest.mark.parametrize(
     ("command", "blocked"), [("check", "jedi"), ("server", "pygls")]
 )
-def test_missing_tools_extra(
+def test_missing_lsp_extra(
     command: str,
     blocked: str,
     tmp_path: Path,

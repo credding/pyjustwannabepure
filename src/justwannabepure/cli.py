@@ -9,8 +9,8 @@ from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 SKIP_DIRS = {"__pycache__", "node_modules", "site-packages", "build", "dist"}
-# Top-level modules installed by the `tools` extra, including transitive ones.
-TOOLS_MODULES = {"jedi", "parso", "pygls", "lsprotocol", "cattrs", "attrs"}
+# Top-level modules installed by the `lsp` extra, including transitive ones.
+LSP_MODULES = {"jedi", "parso", "pygls", "lsprotocol", "cattrs", "attrs"}
 
 
 def iter_python_files(paths: Sequence[Path]) -> Iterator[Path]:
@@ -89,12 +89,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return check_paths([p.resolve() for p in args.paths], root)
     except ModuleNotFoundError as e:
         package = (e.name or "").partition(".")[0]
-        if package not in TOOLS_MODULES:
+        if package not in LSP_MODULES:
             raise
         parser.exit(
             2,
             f"pyjustwannabepure {args.command}: missing dependency '{package}'.\n"
-            f"Install the tools extra: pip install 'justwannabepure[lsp]'\n",
+            f"Install the lsp extra: pip install 'justwannabepure[lsp]'\n",
         )
 
 

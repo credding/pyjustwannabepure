@@ -1,0 +1,10 @@
+id = "pyjustwannabepure"
+name = "pyjustwannabepure"
+version = "0.1.0"
+schema_version = 1
+authors = ["Chandler Redding <c@chandler.dev>"]
+description = "Diagnostics for @pure / @shell / @side_effect from justwannabepure"
+
+[language_servers.pyjustwannabepure]
+name = "pyjustwannabepure"
+languages = ["Python"]
