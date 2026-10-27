@@ -1,6 +1,6 @@
 [project]
 name = "pyjustwannabepure"
-version = "0.1.0"
+version = "0.0.1"
 description = "Decorators for pure functions and imperative shells, plus a language server that enforces them"
 readme = "README.md"
 requires-python = ">=3.12"

@@ -6,6 +6,7 @@ Both commands need the `lsp` extra (jedi, pygls); the decorators themselves do n
 import argparse
 import sys
 from collections.abc import Iterator, Sequence
+from importlib.metadata import version
 from pathlib import Path
 
 SKIP_DIRS = {"__pycache__", "node_modules", "site-packages", "build", "dist"}
@@ -59,6 +60,11 @@ def check_paths(paths: Sequence[Path], root: Path) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pyjustwannabepure")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {version('pyjustwannabepure')}",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     check_cmd = commands.add_parser("check", help="report @pure / @shell violations")
     check_cmd.add_argument(

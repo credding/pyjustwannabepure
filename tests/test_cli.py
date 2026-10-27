@@ -1,4 +1,5 @@
 import sys
+from importlib.metadata import version
 from pathlib import Path
 
 import pytest
@@ -80,3 +81,12 @@ def test_reads_side_effects_from_pyproject(
     assert capsys.readouterr().out.splitlines() == [
         "app.py:5:12: JWP005 @pure function 'f' calls effectful 'vendor.get'"
     ]
+
+
+def test_version(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["--version"])
+    assert exc.value.code == 0
+    assert (
+        capsys.readouterr().out == f"pyjustwannabepure {version('pyjustwannabepure')}\n"
+    )

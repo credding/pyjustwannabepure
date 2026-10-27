@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from importlib.metadata import version
 from pathlib import Path
 
 import jedi
@@ -25,7 +26,7 @@ class PurityServer(LanguageServer):
     def __init__(self) -> None:
         super().__init__(
             "pyjustwannabepure",
-            "0.1.0",
+            version("pyjustwannabepure"),
             text_document_sync_kind=types.TextDocumentSyncKind.Full,
         )
         self.resolver: Resolver | None = None
