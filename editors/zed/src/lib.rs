@@ -4,6 +4,14 @@ const SERVER: &str = "pyjustwannabepure";
 
 struct PyJustWannaBePure;
 
+/// The server inside a virtualenv, which Zed's PATH lookup misses unless the venv is activated.
+fn venv_binary(venv: &str) -> String {
+    match zed::current_platform().0 {
+        zed::Os::Windows => format!("{venv}\\Scripts\\{SERVER}.exe"),
+        _ => format!("{venv}/bin/{SERVER}"),
+    }
+}
+
 impl zed::Extension for PyJustWannaBePure {
     fn new() -> Self {
         PyJustWannaBePure
@@ -14,6 +22,7 @@ impl zed::Extension for PyJustWannaBePure {
         _language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
+        let env = worktree.shell_env();
         // A configured `lsp.pyjustwannabepure.binary` wins over whatever is on PATH.
         let binary = LspSettings::for_worktree(SERVER, worktree)
             .ok()
@@ -22,21 +31,19 @@ impl zed::Extension for PyJustWannaBePure {
             .as_ref()
             .and_then(|binary| binary.arguments.clone())
             .unwrap_or_else(|| vec!["server".into()]);
+        // Extensions cannot stat files outside their sandbox, so the project's `.venv` is the last resort
+        // and a missing binary shows up as a spawn error naming that path.
         let command = binary
             .and_then(|binary| binary.path)
             .or_else(|| worktree.which(SERVER))
-            .ok_or_else(|| {
-                format!(
-                    "{SERVER} not found on PATH; install it with \
-                     `pip install 'justwannabepure[lsp]'` or set lsp.{SERVER}.binary.path"
-                )
-            })?;
+            .or_else(|| {
+                env.iter()
+                    .find(|(key, _)| key == "VIRTUAL_ENV")
+                    .map(|(_, venv)| venv_binary(venv))
+            })
+            .unwrap_or_else(|| venv_binary(&format!("{}/.venv", worktree.root_path())));
 
-        Ok(zed::Command {
-            command,
-            args,
-            env: worktree.shell_env(),
-        })
+        Ok(zed::Command { command, args, env })
     }
 }
 

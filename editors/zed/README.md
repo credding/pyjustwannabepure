@@ -4,13 +4,14 @@ Runs the `pyjustwannabepure` language server on Python files.
 
 Install it from Zed with `zed: install dev extension` and pick this directory.
 
-The extension does not install the server. Put it on your `PATH`:
+The extension does not install the server. It looks for it, in order:
 
-```console
-$ uv tool install 'justwannabepure[lsp]'
-```
+1. `lsp.pyjustwannabepure.binary.path` in your Zed settings
+2. `pyjustwannabepure` on your shell's `PATH` (e.g. `uv tool install 'justwannabepure[lsp]'`)
+3. the active virtualenv (`$VIRTUAL_ENV`)
+4. the project's `.venv`, e.g. after `uv add 'justwannabepure[lsp]'`
 
-or point Zed at a specific binary in `settings.json`:
+To point Zed at a specific binary, add this to `settings.json`:
 
 ```json
 {
