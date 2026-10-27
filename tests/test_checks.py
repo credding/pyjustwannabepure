@@ -220,3 +220,146 @@ def test_non_ascii_columns_are_code_points(tmp_path: Path) -> None:
     """
     [issue] = run(tmp_path, source)
     assert issue.start.character == len('    return ("héllo", ')
+
+
+def test_pure_calls_effectful_stdlib(tmp_path: Path) -> None:
+    source = """
+    import random, time
+    from datetime import datetime
+    from pathlib import Path
+
+    @pure
+    def f(p: Path):
+        print("hi")
+        random.randint(1, 6)
+        time.time()
+        datetime.now()
+        p.read_text()
+        p.with_suffix(".txt")
+        return sorted([3, 1])
+    """
+    issues = run(tmp_path, source)
+    assert codes(issues) == [
+        ("JWP005", 8),
+        ("JWP005", 9),
+        ("JWP005", 10),
+        ("JWP005", 11),
+        ("JWP005", 12),
+    ]
+    assert "'builtins.print'" in issues[0].message
+
+
+def test_pure_os_path_string_helpers_are_fine(tmp_path: Path) -> None:
+    source = """
+    import os
+
+    @pure
+    def f(p):
+        os.path.exists(p)
+        return os.path.join(os.fspath(p), "x")
+    """
+    assert codes(run(tmp_path, source)) == [("JWP005", 6)]
+
+
+def test_pure_references_effectful_functions(tmp_path: Path) -> None:
+    source = """
+    import logging
+
+    @side_effect
+    def roll(): ...
+
+    @pure
+    def f(xs):
+        handlers = [roll]
+        logging.log(logging.INFO, "x")
+        return map(print, xs), handlers
+    """
+    issues = run(tmp_path, source)
+    # `logging.INFO` is a constant, not an effect.
+    assert codes(issues) == [("JWP002", 9), ("JWP005", 10), ("JWP005", 11)]
+    assert "references @side_effect function 'roll'" in issues[0].message
+    assert "references effectful 'builtins.print'" in issues[2].message
+
+
+def test_pure_global_and_nonlocal(tmp_path: Path) -> None:
+    source = """
+    def outer():
+        n = 0
+
+        @pure
+        def f():
+            global g
+            nonlocal n
+
+            def counter():
+                nonlocal m  # only rebinds f's own local
+            m = 0
+    """
+    issues = run(tmp_path, source)
+    assert codes(issues) == [("JWP006", 7), ("JWP006", 8)]
+    assert (issues[0].start.character, issues[0].end.character) == (8, 14)
+
+
+def test_pure_mutates_parameter(tmp_path: Path) -> None:
+    source = """
+    @pure
+    def f(xs, d, self, *, opts):
+        xs.append(1)
+        d["k"] = 1
+        del d["j"]
+        self.cache.items[0] += 1
+        opts.a = 1
+        local = []
+        local.append(1)
+        return [*xs, local, len(d)]
+    """
+    issues = run(tmp_path, source)
+    assert codes(issues) == [
+        ("JWP007", 4),
+        ("JWP007", 5),
+        ("JWP007", 6),
+        ("JWP007", 7),
+        ("JWP007", 8),
+    ]
+    assert "parameter 'self'" in issues[3].message
+
+
+def test_pure_rebound_parameter_may_be_mutated(tmp_path: Path) -> None:
+    source = """
+    @pure
+    def f(xs):
+        xs = list(xs)
+        xs.append(1)
+        return xs
+    """
+    assert run(tmp_path, source) == []
+
+
+def test_pure_calls_shell(tmp_path: Path) -> None:
+    source = """
+    @shell
+    def main(): ...
+
+    @pure
+    def f():
+        main()
+    """
+    [issue] = run(tmp_path, source)
+    assert issue.code == "JWP008"
+
+
+@pytest.mark.parametrize(
+    ("comment", "expected"),
+    [
+        ("# jwp: ignore", []),
+        ("# jwp: ignore[JWP005]", []),
+        ("#jwp:ignore[JWP002, JWP005]", []),
+        ("# jwp: ignore[JWP007]", [("JWP005", 3)]),
+        ("# noqa", [("JWP005", 3)]),
+    ],
+)
+def test_suppression_comments(
+    tmp_path: Path, comment: str, expected: list[tuple[str, int]]
+) -> None:
+    source = f"@pure\ndef f():\n    print('x')  {comment}\n"
+    assert codes(run(tmp_path, source)) == expected

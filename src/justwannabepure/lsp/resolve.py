@@ -3,6 +3,7 @@
 import ast
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import jedi
@@ -19,13 +20,30 @@ def marker_table(module: ast.Module) -> MarkerTable:
     return {fn.lineno: markers for fn, markers in marked_functions(module, aliases)}
 
 
-def callee_position(call: ast.Call) -> tuple[int, int] | None:
-    """Position (1-based line, 0-based column) of the last name segment of the callee."""
-    match call.func:
+@dataclass(frozen=True)
+class Target:
+    """What a callee or function reference resolves to."""
+
+    markers: frozenset[Marker]
+    full_names: frozenset[str]  # e.g. "builtins.print", "pathlib.Path.read_text"
+    # The subset Jedi knows to be a function or class, so not a constant like
+    # `logging.INFO`. Some stdlib functions are missing: `random.randint` is a
+    # module-level assignment.
+    function_names: frozenset[str]
+
+
+NOTHING = Target(frozenset(), frozenset(), frozenset())
+
+
+def name_position(expr: ast.expr) -> tuple[int, int] | None:
+    """Position (1-based line, 0-based column) of the last name segment of `expr`."""
+    match expr:
         case ast.Name() as name:
             return name.lineno, name.col_offset
-        case ast.Attribute(attr=attr) as attribute if attribute.end_lineno is not None:
-            return attribute.end_lineno, attribute.end_col_offset - len(attr)
+        case ast.Attribute(
+            attr=attr, end_lineno=int() as line, end_col_offset=int() as col
+        ):
+            return line, col - len(attr)
     return None
 
 
@@ -44,17 +62,24 @@ class Resolver:
     def script(self, source: str, path: Path) -> jedi.Script:
         return jedi.Script(code=source, path=path, project=self.project)
 
-    def markers_of_call(
-        self, script: jedi.Script, call: ast.Call, current: MarkerTable
-    ) -> set[Marker]:
-        if (pos := callee_position(call)) is None:
-            return set()
+    def resolve(
+        self, script: jedi.Script, expr: ast.expr, current: MarkerTable
+    ) -> Target:
+        """Resolve a callee or a reference to a function (`roll` in `map(roll, xs)`)."""
+        if (pos := name_position(expr)) is None:
+            return NOTHING
         try:
             names = script.goto(*pos, follow_imports=True)
         except Exception:
             log.exception("jedi goto failed at %s:%s", script.path, pos)
-            return set()
+            return NOTHING
         markers: set[Marker] = set()
+        full_names = {name.full_name for name in names if name.full_name}
+        function_names = {
+            name.full_name
+            for name in names
+            if name.full_name and name.type in ("function", "class")
+        }
         for name in names:
             if name.type != "function" or name.module_path is None or name.line is None:
                 continue
@@ -64,7 +89,9 @@ class Resolver:
                 else self._table(name.module_path)
             )
             markers |= table.get(name.line, set())
-        return markers
+        return Target(
+            frozenset(markers), frozenset(full_names), frozenset(function_names)
+        )
 
     def _table(self, path: Path) -> MarkerTable:
         if (source := self._open_source(path)) is not None:

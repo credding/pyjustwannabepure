@@ -1,10 +1,12 @@
 """The inspections themselves, independent of the LSP plumbing."""
 
 import ast
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from .effects import is_effectful
 from .markers import (
     FunctionNode,
     Marker,
@@ -23,6 +25,27 @@ CONTROL_FLOW: dict[type[ast.stmt], str] = {
     ast.AsyncFor: "async for",
     ast.While: "while",
 }
+
+MUTATORS = frozenset(
+    {
+        "append",
+        "extend",
+        "insert",
+        "pop",
+        "popitem",
+        "remove",
+        "clear",
+        "update",
+        "setdefault",
+        "add",
+        "discard",
+        "sort",
+        "reverse",
+    }
+)
+
+# `# jwp: ignore` or `# jwp: ignore[JWP005, JWP007]`
+_IGNORE = re.compile(r"#\s*jwp:\s*ignore(?:\[(?P<codes>[^\]]*)\])?")
 
 
 @dataclass(frozen=True)
@@ -77,6 +100,87 @@ def _body_nodes(fn: FunctionNode) -> Iterator[ast.AST]:
     """Everything lexically inside the function body, including nested defs and lambdas."""
     for stmt in fn.body:
         yield from ast.walk(stmt)
+
+
+def _own_nodes(fn: FunctionNode) -> Iterator[ast.AST]:
+    """Like `_body_nodes`, but without descending into nested defs, lambdas or classes."""
+    stack: list[ast.AST] = list(fn.body)
+    while stack:
+        node = stack.pop()
+        yield node
+        if not isinstance(
+            node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda | ast.ClassDef
+        ):
+            stack.extend(ast.iter_child_nodes(node))
+
+
+def _passed_values(node: ast.AST) -> list[ast.expr]:
+    """Expressions handed to something else: call arguments and container elements."""
+    match node:
+        case ast.Call(args=args, keywords=keywords):
+            return [*args, *(keyword.value for keyword in keywords)]
+        case ast.List(elts=elts) | ast.Tuple(elts=elts) | ast.Set(elts=elts):
+            return elts
+        case ast.Dict(values=values):
+            return values
+    return []
+
+
+def _references(fn: FunctionNode) -> Iterator[tuple[ast.expr, bool]]:
+    """Callees (`True`) and names passed around as values (`False`), like `roll` in `map(roll, xs)`."""
+    for node in _body_nodes(fn):
+        if isinstance(node, ast.Call):
+            yield node.func, True
+        for value in _passed_values(node):
+            if isinstance(value, ast.Name | ast.Attribute) and isinstance(
+                value.ctx, ast.Load
+            ):
+                yield value, False
+
+
+def _root_name(expr: ast.expr) -> str | None:
+    """`x` in `x.a[0].b`."""
+    while isinstance(expr, ast.Attribute | ast.Subscript):
+        expr = expr.value
+    return expr.id if isinstance(expr, ast.Name) else None
+
+
+def _mutations(fn: FunctionNode) -> Iterator[tuple[ast.expr, str]]:
+    """Attribute/item stores, deletes and mutating method calls on a parameter."""
+    args = fn.args
+    params = {
+        arg.arg
+        for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs]
+        + [arg for arg in (args.vararg, args.kwarg) if arg]
+    }
+    nodes = list(_body_nodes(fn))
+    # A parameter rebound anywhere (`xs = list(xs)`) no longer reliably names the argument.
+    params -= {
+        node.id
+        for node in nodes
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store | ast.Del)
+    }
+    for node in nodes:
+        match node:
+            case (
+                ast.Attribute(ctx=ast.Store() | ast.Del())
+                | ast.Subscript(ctx=ast.Store() | ast.Del())
+            ):
+                target = node
+            case ast.Call(func=ast.Attribute(attr=attr) as func) if attr in MUTATORS:
+                target = func
+            case _:
+                continue
+        if (name := _root_name(target)) in params:
+            yield target, name
+
+
+def _suppressed(issue: "Issue", lines: list[str]) -> bool:
+    line = lines[issue.start.line] if issue.start.line < len(lines) else ""
+    if (found := _IGNORE.search(line)) is None:
+        return False
+    codes = found["codes"]
+    return codes is None or issue.code in {c.strip() for c in codes.split(",")}
 
 
 def _is_capture(pattern: ast.pattern) -> bool:
@@ -155,21 +259,63 @@ def check(
                         *loc.header(fn),
                     )
                 )
-            for node in _body_nodes(fn):
-                if not isinstance(node, ast.Call):
-                    continue
+            for expr, called in _references(fn):
                 script = script or resolver.script(source, path)
-                if Marker.SIDE_EFFECT in resolver.markers_of_call(
-                    script, node, current
-                ):
-                    callee = ast.unparse(node.func)
+                target = resolver.resolve(script, expr, current)
+                verb = "calls" if called else "references"
+                name = ast.unparse(expr)
+                if Marker.SIDE_EFFECT in target.markers:
                     issues.append(
                         Issue(
                             "JWP002",
-                            f"@pure function '{fn.name}' calls @side_effect function '{callee}'",
-                            *loc.span(node.func),
+                            f"@pure function '{fn.name}' {verb} @side_effect function '{name}'",
+                            *loc.span(expr),
                         )
                     )
+                if Marker.SHELL in target.markers:
+                    issues.append(
+                        Issue(
+                            "JWP008",
+                            f"@pure function '{fn.name}' {verb} @shell function '{name}'",
+                            *loc.span(expr),
+                        )
+                    )
+                full_names = target.full_names if called else target.function_names
+                if effectful := min(filter(is_effectful, full_names), default=None):
+                    issues.append(
+                        Issue(
+                            "JWP005",
+                            f"@pure function '{fn.name}' {verb} effectful '{effectful}'",
+                            *loc.span(expr),
+                        )
+                    )
+            for node in _body_nodes(fn):
+                if isinstance(node, ast.Global):
+                    issues.append(
+                        Issue(
+                            "JWP006",
+                            f"@pure function '{fn.name}' must not use 'global'",
+                            *loc.keyword(node, "global"),
+                        )
+                    )
+            # `nonlocal` in a nested def only rebinds the pure function's own locals.
+            for node in _own_nodes(fn):
+                if isinstance(node, ast.Nonlocal):
+                    issues.append(
+                        Issue(
+                            "JWP006",
+                            f"@pure function '{fn.name}' must not use 'nonlocal'",
+                            *loc.keyword(node, "nonlocal"),
+                        )
+                    )
+            for target, param in _mutations(fn):
+                issues.append(
+                    Issue(
+                        "JWP007",
+                        f"@pure function '{fn.name}' mutates its parameter '{param}'",
+                        *loc.span(target),
+                    )
+                )
 
         if Marker.SHELL in markers:
             for node in _body_nodes(fn):
@@ -185,4 +331,7 @@ def check(
                         )
                     )
 
-    return sorted(issues, key=lambda i: (i.start.line, i.start.character, i.code))
+    return sorted(
+        (issue for issue in issues if not _suppressed(issue, loc.lines)),
+        key=lambda i: (i.start.line, i.start.character, i.code),
+    )

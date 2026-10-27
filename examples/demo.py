@@ -27,7 +27,21 @@ def score(d: Dice) -> int:
     b = r(6)  # JWP002 (aliased import)
     c = effects.roll(20)  # JWP002 (module attribute)
     e = d.roll()  # JWP002 (method)
-    return helper(a + b + c + e)  # fine: unannotated
+    f = list(map(r, [6]))  # JWP002 (reference)
+    print(a)  # JWP005
+    return helper(a + b + c + e + f[0])  # fine: unannotated
+
+
+total = 0
+
+
+@pure
+def tally(counts: dict[str, int], key: str) -> int:
+    global total  # JWP006
+    counts[key] = 1  # JWP007
+    main()  # JWP008
+    total = len(counts)
+    return total
 
 
 @pure
