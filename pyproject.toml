@@ -1,0 +1,31 @@
+[project]
+name = "justwannabepure"
+version = "0.1.0"
+description = "Decorators for pure functions and imperative shells, plus a language server that enforces them"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+lsp = ["pygls>=2", "jedi>=0.19"]
+
+[project.scripts]
+pyjustwannabepure = "justwannabepure.cli:main"
+justwannabepure-lsp = "justwannabepure.lsp.server:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "pytest-lsp>=1",
+    "ruff>=0.17.3",
+    "ty>=0.0.92",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
