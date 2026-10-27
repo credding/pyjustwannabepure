@@ -5,6 +5,7 @@ import jedi
 import pytest
 
 from justwannabepure.lsp.checks import Issue, check, parse
+from justwannabepure.lsp.effects import Effects, load_effects
 from justwannabepure.lsp.resolve import Resolver
 
 HEADER = "from justwannabepure import pure, shell, side_effect\n"
@@ -124,6 +125,8 @@ def test_pure_and_side_effect_conflict(tmp_path: Path) -> None:
         ("try:\n        pass\n    except* ValueError:\n        pass", "try"),
         ("for _ in x:\n        pass", "for"),
         ("while x:\n        pass", "while"),
+        ("raise ValueError(x)", "raise"),
+        ("assert x", "assert"),
         ("def inner():\n        if x: pass", "if"),
     ],
 )
@@ -152,8 +155,7 @@ def test_shell_allowed_constructs(tmp_path: Path) -> None:
         ok = x and y
         with open("f") as fh:
             fh.read()
-        assert ok
-        raise ValueError(zs)
+        print(ok, zs)
     """
     assert run(tmp_path, source) == []
 
@@ -167,8 +169,8 @@ def test_shell_allowed_constructs(tmp_path: Path) -> None:
         "case Ok() as ok: pass",
         "case int() | float(): pass",
         "case None: pass\n        case str(s): pass",
-        "case Ok(v): pass\n        case _: raise ValueError(x)",
-        "case Ok(v): pass\n        case other: raise ValueError(other)",
+        "case Ok(v): pass\n        case _: print(x)",
+        "case Ok(v): pass\n        case other: print(other)",
     ],
 )
 def test_shell_type_narrowing_match_allowed(tmp_path: Path, cases: str) -> None:
@@ -363,3 +365,48 @@ def test_suppression_comments(
 ) -> None:
     source = f"@pure\ndef f():\n    print('x')  {comment}\n"
     assert codes(run(tmp_path, source)) == expected
+
+
+def test_project_side_effects_from_pyproject(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pyjustwannabepure]\nside_effects = ["vendor.g*", "*.save", "os.path.join"]\n'
+    )
+    (tmp_path / "vendor.py").write_text(
+        "def get(): ...\nclass Model:\n    def save(self): ...\n    def copy(self): ...\n"
+    )
+    source = HEADER + dedent("""
+    import os
+    import vendor
+
+    @pure
+    def f(m: vendor.Model):
+        vendor.get()
+        m.save()
+        m.copy()
+        return os.path.join("a", "b")
+    """)
+    path = tmp_path / "main.py"
+    path.write_text(source)
+    module = parse(source, path)
+    assert module is not None
+    effects = load_effects(tmp_path)
+    issues = check(module, source, path, Resolver(jedi.Project(tmp_path)), effects)
+    assert codes(issues) == [("JWP005", 7), ("JWP005", 8), ("JWP005", 10)]
+    assert "'vendor.get'" in issues[0].message
+
+
+@pytest.mark.parametrize(
+    "pyproject",
+    [
+        None,
+        "[project]\nname = 'x'\n",
+        "[tool.pyjustwannabepure]\nside_effects = 'vendor.*'\n",
+        "not toml [",
+    ],
+)
+def test_missing_or_invalid_config_uses_defaults(
+    tmp_path: Path, pyproject: str | None
+) -> None:
+    if pyproject is not None:
+        (tmp_path / "pyproject.toml").write_text(pyproject)
+    assert load_effects(tmp_path) == Effects()

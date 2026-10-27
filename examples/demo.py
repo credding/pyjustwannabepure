@@ -58,4 +58,5 @@ def main() -> None:
     try:  # JWP003
         pass
     except ValueError:
-        raise
+        raise  # JWP003
+    assert x  # JWP003

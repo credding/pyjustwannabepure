@@ -13,6 +13,7 @@ from pygls.workspace import TextDocument
 from pygls.workspace.position_codec import ServerTextPosition, ServerTextRange
 
 from .checks import Issue, check, parse
+from .effects import Effects, load_effects
 from .resolve import Resolver
 
 DEBOUNCE_SECONDS = 0.3
@@ -28,6 +29,7 @@ class PurityServer(LanguageServer):
             text_document_sync_kind=types.TextDocumentSyncKind.Full,
         )
         self.resolver: Resolver | None = None
+        self.effects = Effects()
         # Jedi is not thread-safe, so every check runs on this one worker thread.
         self.executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="jwp-check"
@@ -42,6 +44,7 @@ class PurityServer(LanguageServer):
         if self.resolver is None:
             root = self.workspace.root_path or str(Path.cwd())
             self.resolver = Resolver(jedi.Project(root), self.open_source)
+            self.effects = load_effects(Path(root))
         return self.resolver
 
     def schedule(self, uri: str, delay: float = 0.0) -> None:
@@ -65,7 +68,7 @@ class PurityServer(LanguageServer):
         loop = asyncio.get_running_loop()
         try:
             issues = await loop.run_in_executor(
-                self.executor, check, module, source, path, resolver
+                self.executor, check, module, source, path, resolver, self.effects
             )
         except Exception:
             log.exception("check failed for %s", uri)

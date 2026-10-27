@@ -28,9 +28,11 @@ def check_paths(paths: Sequence[Path], root: Path) -> int:
     import jedi
 
     from .lsp.checks import check, parse
+    from .lsp.effects import load_effects
     from .lsp.resolve import Resolver
 
     resolver = Resolver(jedi.Project(root))
+    effects = load_effects(root)
     found = errors = 0
     for path in iter_python_files(paths):
         shown = path.relative_to(root) if path.is_relative_to(root) else path
@@ -44,7 +46,7 @@ def check_paths(paths: Sequence[Path], root: Path) -> int:
             print(f"{shown}: error: syntax error, skipped", file=sys.stderr)
             errors += 1
             continue
-        for issue in check(module, source, path, resolver):
+        for issue in check(module, source, path, resolver, effects):
             print(
                 f"{shown}:{issue.start.line + 1}:{issue.start.character + 1}: {issue.code} {issue.message}"
             )

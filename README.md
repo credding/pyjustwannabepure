@@ -7,7 +7,7 @@ server that checks them:
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `JWP001` | `@pure` functions must not be `async`                                                                                                                |
 | `JWP002` | `@pure` functions must not call `@side_effect` functions                                                                                             |
-| `JWP003` | `@shell` functions must not contain `if`/`match`/`try`/`for`/`while` (a `match` that only narrows types is allowed)                                  |
+| `JWP003` | `@shell` functions must not contain `if`/`match`/`try`/`for`/`while`/`raise`/`assert` (a `match` that only narrows types is allowed)                 |
 | `JWP004` | a function cannot be both `@pure` and `@side_effect`                                                                                                 |
 | `JWP005` | `@pure` functions must not call or pass around known-effectful builtins and stdlib functions (`print`, `open`, `time.time`, `random.*`, `os.*`, ...) |
 | `JWP006` | `@pure` functions must not use `global`, or `nonlocal` outside a nested function                                                                     |
@@ -19,6 +19,14 @@ around without calling it, like `map(roll, xs)`.
 
 Silence a line with `# jwp: ignore`, or only some codes with
 `# jwp: ignore[JWP005, JWP007]`.
+
+Declare your project's own effectful functions for `JWP005` in `pyproject.toml`
+at the project root, as glob patterns over fully qualified names:
+
+```toml
+[tool.pyjustwannabepure]
+side_effects = ["requests.*", "myapp.db.*", "*.write_csv"]
+```
 
 ```python
 from justwannabepure import pure, shell, side_effect

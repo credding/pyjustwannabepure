@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from .effects import is_effectful
+from .effects import BUILTIN_EFFECTS, Effects
 from .markers import (
     FunctionNode,
     Marker,
@@ -24,6 +24,8 @@ CONTROL_FLOW: dict[type[ast.stmt], str] = {
     ast.For: "for",
     ast.AsyncFor: "async for",
     ast.While: "while",
+    ast.Raise: "raise",
+    ast.Assert: "assert",
 }
 
 MUTATORS = frozenset(
@@ -226,7 +228,11 @@ def parse(source: str, path: Path) -> ast.Module | None:
 
 
 def check(
-    module: ast.Module, source: str, path: Path, resolver: Resolver
+    module: ast.Module,
+    source: str,
+    path: Path,
+    resolver: Resolver,
+    effects: Effects = BUILTIN_EFFECTS,
 ) -> list[Issue]:
     aliases = collect_aliases(module)
     functions = marked_functions(module, aliases)
@@ -281,7 +287,7 @@ def check(
                         )
                     )
                 full_names = target.full_names if called else target.function_names
-                if effectful := min(filter(is_effectful, full_names), default=None):
+                if effectful := min(filter(effects, full_names), default=None):
                     issues.append(
                         Issue(
                             "JWP005",

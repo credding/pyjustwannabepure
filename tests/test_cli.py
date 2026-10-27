@@ -64,3 +64,19 @@ def test_missing_lsp_extra(
     err = capsys.readouterr().err
     assert f"missing dependency '{blocked}'" in err
     assert "justwannabepure[lsp]" in err
+
+
+def test_reads_side_effects_from_pyproject(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pyjustwannabepure]\nside_effects = ["vendor.*"]\n'
+    )
+    (tmp_path / "vendor.py").write_text("def get(): ...\n")
+    (tmp_path / "app.py").write_text(
+        HEADER + "import vendor\n@pure\ndef f():\n    return vendor.get()\n"
+    )
+    assert main(["check", str(tmp_path / "app.py"), "--root", str(tmp_path)]) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "app.py:5:12: JWP005 @pure function 'f' calls effectful 'vendor.get'"
+    ]

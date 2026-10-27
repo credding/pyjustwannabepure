@@ -1,5 +1,13 @@
 """Well-known effectful builtins and stdlib functions, by Jedi's fully qualified name."""
 
+import logging
+import tomllib
+from dataclasses import dataclass
+from fnmatch import fnmatchcase
+from pathlib import Path
+
+log = logging.getLogger(__name__)
+
 _EFFECTFUL = frozenset(
     {
         "builtins.print",
@@ -72,3 +80,38 @@ def is_effectful(full_name: str) -> bool:
     if full_name in _PURE or full_name.startswith(_PURE_PREFIXES):
         return False
     return full_name.startswith(_EFFECTFUL_PREFIXES)
+
+
+@dataclass(frozen=True)
+class Effects:
+    """The builtin table plus project patterns, like `requests.*` or `*.write_text`."""
+
+    patterns: tuple[str, ...] = ()
+
+    def __call__(self, full_name: str) -> bool:
+        # Project patterns win over the builtin pure exceptions.
+        return any(fnmatchcase(full_name, p) for p in self.patterns) or is_effectful(
+            full_name
+        )
+
+
+BUILTIN_EFFECTS = Effects()
+
+
+def load_effects(root: Path) -> Effects:
+    """Read `[tool.pyjustwannabepure] side_effects = [...]` from `root/pyproject.toml`."""
+    try:
+        with (root / "pyproject.toml").open("rb") as f:
+            config = tomllib.load(f)
+    except FileNotFoundError:
+        return Effects()
+    except (OSError, tomllib.TOMLDecodeError):
+        log.exception("could not read %s", root / "pyproject.toml")
+        return Effects()
+    patterns = config.get("tool", {}).get("pyjustwannabepure", {}).get("side_effects")
+    if patterns is None:
+        return Effects()
+    if not isinstance(patterns, list) or not all(isinstance(p, str) for p in patterns):
+        log.warning("tool.pyjustwannabepure.side_effects must be a list of strings")
+        return Effects()
+    return Effects(tuple(patterns))
