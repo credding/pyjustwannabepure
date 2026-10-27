@@ -22,10 +22,16 @@ log = logging.getLogger(__name__)
 
 class PurityServer(LanguageServer):
     def __init__(self) -> None:
-        super().__init__("justwannabepure", "0.1.0", text_document_sync_kind=types.TextDocumentSyncKind.Full)
+        super().__init__(
+            "pyjustwannabepure",
+            "0.1.0",
+            text_document_sync_kind=types.TextDocumentSyncKind.Full,
+        )
         self.resolver: Resolver | None = None
         # Jedi is not thread-safe, so every check runs on this one worker thread.
-        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="jwp-check")
+        self.executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="jwp-check"
+        )
         self.pending: dict[str, asyncio.Task[None]] = {}
 
     def open_source(self, path: Path) -> str | None:
@@ -41,7 +47,9 @@ class PurityServer(LanguageServer):
     def schedule(self, uri: str, delay: float = 0.0) -> None:
         if task := self.pending.pop(uri, None):
             task.cancel()
-        self.pending[uri] = asyncio.get_running_loop().create_task(self.validate(uri, delay))
+        self.pending[uri] = asyncio.get_running_loop().create_task(
+            self.validate(uri, delay)
+        )
 
     async def validate(self, uri: str, delay: float) -> None:
         if delay:
@@ -56,7 +64,9 @@ class PurityServer(LanguageServer):
         resolver = self.get_resolver()
         loop = asyncio.get_running_loop()
         try:
-            issues = await loop.run_in_executor(self.executor, check, module, source, path, resolver)
+            issues = await loop.run_in_executor(
+                self.executor, check, module, source, path, resolver
+            )
         except Exception:
             log.exception("check failed for %s", uri)
             return
@@ -64,7 +74,9 @@ class PurityServer(LanguageServer):
             return  # stale: a newer check is already scheduled
         self.text_document_publish_diagnostics(
             types.PublishDiagnosticsParams(
-                uri=uri, version=doc.version, diagnostics=[to_diagnostic(doc, issue) for issue in issues]
+                uri=uri,
+                version=doc.version,
+                diagnostics=[to_diagnostic(doc, issue) for issue in issues],
             )
         )
 
@@ -108,7 +120,9 @@ def did_close(ls: PurityServer, params: types.DidCloseTextDocumentParams) -> Non
     uri = params.text_document.uri
     if task := ls.pending.pop(uri, None):
         task.cancel()
-    ls.text_document_publish_diagnostics(types.PublishDiagnosticsParams(uri=uri, diagnostics=[]))
+    ls.text_document_publish_diagnostics(
+        types.PublishDiagnosticsParams(uri=uri, diagnostics=[])
+    )
 
 
 def main() -> None:

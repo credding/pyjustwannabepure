@@ -52,15 +52,21 @@ class _Locator:
 
     def span(self, node: ast.expr | ast.stmt) -> tuple[Position, Position]:
         end_lineno = node.end_lineno or node.lineno
-        end_col = node.end_col_offset if node.end_col_offset is not None else node.col_offset
-        return self.position(node.lineno, node.col_offset), self.position(end_lineno, end_col)
+        end_col = (
+            node.end_col_offset if node.end_col_offset is not None else node.col_offset
+        )
+        return self.position(node.lineno, node.col_offset), self.position(
+            end_lineno, end_col
+        )
 
     def header(self, fn: FunctionNode) -> tuple[Position, Position]:
         """From `async def` up to the end of the function name."""
         start = self.position(fn.lineno, fn.col_offset)
         text = self.lines[start.line]
         name_at = text.find(fn.name, text.find("def", start.character) + len("def"))
-        return start, Position(start.line, name_at + len(fn.name) if name_at >= 0 else len(text))
+        return start, Position(
+            start.line, name_at + len(fn.name) if name_at >= 0 else len(text)
+        )
 
     def keyword(self, stmt: ast.stmt, keyword: str) -> tuple[Position, Position]:
         start = self.position(stmt.lineno, stmt.col_offset)
@@ -80,7 +86,9 @@ def parse(source: str, path: Path) -> ast.Module | None:
         return None
 
 
-def check(module: ast.Module, source: str, path: Path, resolver: Resolver) -> list[Issue]:
+def check(
+    module: ast.Module, source: str, path: Path, resolver: Resolver
+) -> list[Issue]:
     aliases = collect_aliases(module)
     functions = marked_functions(module, aliases)
     if not functions:
@@ -95,16 +103,30 @@ def check(module: ast.Module, source: str, path: Path, resolver: Resolver) -> li
         if Marker.PURE in markers and Marker.SIDE_EFFECT in markers:
             for decorator in fn.decorator_list:
                 if decorator_marker(decorator, aliases) is Marker.SIDE_EFFECT:
-                    issues.append(Issue("JWP004", f"'{fn.name}' cannot be both @pure and @side_effect", *loc.span(decorator)))
+                    issues.append(
+                        Issue(
+                            "JWP004",
+                            f"'{fn.name}' cannot be both @pure and @side_effect",
+                            *loc.span(decorator),
+                        )
+                    )
 
         if Marker.PURE in markers:
             if isinstance(fn, ast.AsyncFunctionDef):
-                issues.append(Issue("JWP001", f"@pure function '{fn.name}' must not be async", *loc.header(fn)))
+                issues.append(
+                    Issue(
+                        "JWP001",
+                        f"@pure function '{fn.name}' must not be async",
+                        *loc.header(fn),
+                    )
+                )
             for node in _body_nodes(fn):
                 if not isinstance(node, ast.Call):
                     continue
                 script = script or resolver.script(source, path)
-                if Marker.SIDE_EFFECT in resolver.markers_of_call(script, node, current):
+                if Marker.SIDE_EFFECT in resolver.markers_of_call(
+                    script, node, current
+                ):
                     callee = ast.unparse(node.func)
                     issues.append(
                         Issue(

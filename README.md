@@ -14,7 +14,7 @@ server that checks them:
 from justwannabepure import pure, shell, side_effect
 ```
 
-Run the server with `uv run justwannabepure-lsp` (stdio).
+Run the language server (stdio) with `uv run pyjustwannabepure server`.
 
 Or run it as a one-shot static analysis (exits 1 if anything is found):
 

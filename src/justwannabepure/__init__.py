@@ -1,6 +1,6 @@
 """Marker decorators for functional-core / imperative-shell code.
 
-They are identity functions at runtime; the ``justwannabepure-lsp`` language
+They are identity functions at runtime; the ``pyjustwannabepure-lsp`` language
 server reads them statically and reports violations.
 """
 

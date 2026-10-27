@@ -26,11 +26,15 @@ def g(x):
 
 
 @pytest_lsp.fixture(
-    config=ClientServerConfig(server_command=[sys.executable, "-m", "justwannabepure.lsp.server"]),
+    config=ClientServerConfig(
+        server_command=[sys.executable, "-m", "justwannabepure.cli", "server"]
+    ),
 )
 async def client(lsp_client: LanguageClient):
     await lsp_client.initialize_session(
-        types.InitializeParams(capabilities=types.ClientCapabilities(), root_uri=from_fs_path(str(ROOT)))
+        types.InitializeParams(
+            capabilities=types.ClientCapabilities(), root_uri=from_fs_path(str(ROOT))
+        )
     )
     yield
     await lsp_client.shutdown_session()
@@ -41,20 +45,28 @@ async def test_publishes_diagnostics(client: LanguageClient) -> None:
     assert uri is not None
     client.text_document_did_open(
         types.DidOpenTextDocumentParams(
-            text_document=types.TextDocumentItem(uri=uri, language_id="python", version=1, text=SOURCE)
+            text_document=types.TextDocumentItem(
+                uri=uri, language_id="python", version=1, text=SOURCE
+            )
         )
     )
     await client.wait_for_notification(types.TEXT_DOCUMENT_PUBLISH_DIAGNOSTICS)
 
     diagnostics = client.diagnostics[uri]
-    assert [(d.code, d.range.start.line) for d in diagnostics] == [("JWP001", 6), ("JWP002", 7), ("JWP003", 11)]
+    assert [(d.code, d.range.start.line) for d in diagnostics] == [
+        ("JWP001", 6),
+        ("JWP002", 7),
+        ("JWP003", 11),
+    ]
     assert all(d.source == "justwannabepure" for d in diagnostics)
 
     # Fixing the code clears the diagnostics.
     client.text_document_did_change(
         types.DidChangeTextDocumentParams(
             text_document=types.VersionedTextDocumentIdentifier(uri=uri, version=2),
-            content_changes=[types.TextDocumentContentChangeWholeDocument(text="x = 1\n")],
+            content_changes=[
+                types.TextDocumentContentChangeWholeDocument(text="x = 1\n")
+            ],
         )
     )
     await client.wait_for_notification(types.TEXT_DOCUMENT_PUBLISH_DIAGNOSTICS)

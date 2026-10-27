@@ -40,7 +40,9 @@ def check_paths(paths: Sequence[Path], root: Path) -> int:
             errors += 1
             continue
         for issue in check(module, source, path, resolver):
-            print(f"{shown}:{issue.start.line + 1}:{issue.start.character + 1}: {issue.code} {issue.message}")
+            print(
+                f"{shown}:{issue.start.line + 1}:{issue.start.character + 1}: {issue.code} {issue.message}"
+            )
             found += 1
 
     if found:
@@ -52,11 +54,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pyjustwannabepure")
     commands = parser.add_subparsers(dest="command", required=True)
     check_cmd = commands.add_parser("check", help="report @pure / @shell violations")
-    check_cmd.add_argument("paths", nargs="*", type=Path, default=[Path(".")], help="files or directories")
     check_cmd.add_argument(
-        "--root", type=Path, default=Path("."), help="project root used to resolve imports (default: .)"
+        "paths", nargs="*", type=Path, default=[Path(".")], help="files or directories"
+    )
+    check_cmd.add_argument(
+        "--root",
+        type=Path,
+        default=Path("."),
+        help="project root used to resolve imports (default: .)",
+    )
+    server_cmd = commands.add_parser("server", help="start the language server")
+    # Many editor clients pass --stdio unconditionally; it is the only transport, so accept it as a no-op.
+    server_cmd.add_argument(
+        "--stdio", action="store_true", help="communicate over stdin/stdout (default)"
     )
     args = parser.parse_args(argv)
+
+    if args.command == "server":
+        from .lsp.server import main as serve
+
+        serve()
+        return 0
 
     root = args.root.resolve()
     missing = [p for p in args.paths if not p.exists()]

@@ -34,7 +34,11 @@ class C:
     @pure
     def c(self): ...
 """
-    assert markers(source) == {"a": {Marker.SIDE_EFFECT}, "b": {Marker.SHELL}, "c": {Marker.PURE}}
+    assert markers(source) == {
+        "a": {Marker.SIDE_EFFECT},
+        "b": {Marker.SHELL},
+        "c": {Marker.PURE},
+    }
 
 
 @pytest.mark.parametrize(

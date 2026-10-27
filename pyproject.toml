@@ -11,7 +11,6 @@ lsp = ["pygls>=2", "jedi>=0.19"]
 
 [project.scripts]
 pyjustwannabepure = "justwannabepure.cli:main"
-justwannabepure-lsp = "justwannabepure.lsp.server:main"
 
 [dependency-groups]
 dev = [

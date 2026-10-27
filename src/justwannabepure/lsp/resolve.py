@@ -30,15 +30,23 @@ def callee_position(call: ast.Call) -> tuple[int, int] | None:
 
 
 class Resolver:
-    def __init__(self, project: jedi.Project, open_source: Callable[[Path], str | None] = lambda _: None):
+    def __init__(
+        self,
+        project: jedi.Project,
+        open_source: Callable[[Path], str | None] = lambda _: None,
+    ):
         self.project = project
-        self._open_source = open_source  # unsaved editor buffers take precedence over disk
+        self._open_source = (
+            open_source  # unsaved editor buffers take precedence over disk
+        )
         self._cache: dict[Path, tuple[object, MarkerTable]] = {}
 
     def script(self, source: str, path: Path) -> jedi.Script:
         return jedi.Script(code=source, path=path, project=self.project)
 
-    def markers_of_call(self, script: jedi.Script, call: ast.Call, current: MarkerTable) -> set[Marker]:
+    def markers_of_call(
+        self, script: jedi.Script, call: ast.Call, current: MarkerTable
+    ) -> set[Marker]:
         if (pos := callee_position(call)) is None:
             return set()
         try:
@@ -50,7 +58,11 @@ class Resolver:
         for name in names:
             if name.type != "function" or name.module_path is None or name.line is None:
                 continue
-            table = current if name.module_path == script.path else self._table(name.module_path)
+            table = (
+                current
+                if name.module_path == script.path
+                else self._table(name.module_path)
+            )
             markers |= table.get(name.line, set())
         return markers
 

@@ -10,7 +10,9 @@ from justwannabepure.lsp.resolve import Resolver
 HEADER = "from justwannabepure import pure, shell, side_effect\n"
 
 
-def run(tmp_path: Path, source: str, name: str = "main.py", **others: str) -> list[Issue]:
+def run(
+    tmp_path: Path, source: str, name: str = "main.py", **others: str
+) -> list[Issue]:
     for module, text in others.items():
         (tmp_path / f"{module}.py").write_text(HEADER + dedent(text))
     path = tmp_path / name
@@ -74,7 +76,10 @@ def test_pure_calls_side_effect_cross_module(tmp_path: Path) -> None:
     assert codes(issues) == [("JWP002", 9), ("JWP002", 10)]
     assert "'effects.roll'" in issues[0].message
     # The range covers exactly the callee expression.
-    assert (issues[0].start.character, issues[0].end.character) == (4, len("    effects.roll"))
+    assert (issues[0].start.character, issues[0].end.character) == (
+        4,
+        len("    effects.roll"),
+    )
 
 
 def test_nested_calls_inside_pure_are_checked(tmp_path: Path) -> None:
@@ -105,7 +110,9 @@ def test_side_effect_outside_pure_is_fine(tmp_path: Path) -> None:
 
 
 def test_pure_and_side_effect_conflict(tmp_path: Path) -> None:
-    assert codes(run(tmp_path, "@pure\n@side_effect\ndef f(): ...\n")) == [("JWP004", 2)]
+    assert codes(run(tmp_path, "@pure\n@side_effect\ndef f(): ...\n")) == [
+        ("JWP004", 2)
+    ]
 
 
 @pytest.mark.parametrize(
@@ -127,8 +134,13 @@ def test_shell_control_flow(tmp_path: Path, body: str, keyword: str) -> None:
 
 
 def test_shell_async_for(tmp_path: Path) -> None:
-    [issue] = run(tmp_path, "@shell\nasync def f(x):\n    async for _ in x:\n        pass\n")
-    assert (issue.code, issue.end.character - issue.start.character) == ("JWP003", len("async for"))
+    [issue] = run(
+        tmp_path, "@shell\nasync def f(x):\n    async for _ in x:\n        pass\n"
+    )
+    assert (issue.code, issue.end.character - issue.start.character) == (
+        "JWP003",
+        len("async for"),
+    )
 
 
 def test_shell_allowed_constructs(tmp_path: Path) -> None:
