@@ -6,6 +6,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from justwannabepure import pure
+
 from .effects import BUILTIN_EFFECTS, Effects
 from .markers import (
     FunctionNode,
@@ -70,11 +72,13 @@ class _Locator:
     def __init__(self, source: str):
         self.lines = source.splitlines()
 
+    @pure
     def position(self, lineno: int, byte_col: int) -> Position:
         line = lineno - 1
         text = self.lines[line] if line < len(self.lines) else ""
         return Position(line, len(text.encode()[:byte_col].decode(errors="ignore")))
 
+    @pure
     def span(self, node: ast.expr | ast.stmt) -> tuple[Position, Position]:
         end_lineno = node.end_lineno or node.lineno
         end_col = (
@@ -84,6 +88,7 @@ class _Locator:
             end_lineno, end_col
         )
 
+    @pure
     def header(self, fn: FunctionNode) -> tuple[Position, Position]:
         """From `async def` up to the end of the function name."""
         start = self.position(fn.lineno, fn.col_offset)
@@ -93,17 +98,20 @@ class _Locator:
             start.line, name_at + len(fn.name) if name_at >= 0 else len(text)
         )
 
+    @pure
     def keyword(self, stmt: ast.stmt, keyword: str) -> tuple[Position, Position]:
         start = self.position(stmt.lineno, stmt.col_offset)
         return start, Position(start.line, start.character + len(keyword))
 
 
+@pure
 def _body_nodes(fn: FunctionNode) -> Iterator[ast.AST]:
     """Everything lexically inside the function body, including nested defs and lambdas."""
     for stmt in fn.body:
         yield from ast.walk(stmt)
 
 
+@pure
 def _own_nodes(fn: FunctionNode) -> Iterator[ast.AST]:
     """Like `_body_nodes`, but without descending into nested defs, lambdas or classes."""
     stack: list[ast.AST] = list(fn.body)
@@ -116,6 +124,7 @@ def _own_nodes(fn: FunctionNode) -> Iterator[ast.AST]:
             stack.extend(ast.iter_child_nodes(node))
 
 
+@pure
 def _passed_values(node: ast.AST) -> list[ast.expr]:
     """Expressions handed to something else: call arguments and container elements."""
     match node:
@@ -128,6 +137,7 @@ def _passed_values(node: ast.AST) -> list[ast.expr]:
     return []
 
 
+@pure
 def _references(fn: FunctionNode) -> Iterator[tuple[ast.expr, bool]]:
     """Callees (`True`) and names passed around as values (`False`), like `roll` in `map(roll, xs)`."""
     for node in _body_nodes(fn):
@@ -140,6 +150,7 @@ def _references(fn: FunctionNode) -> Iterator[tuple[ast.expr, bool]]:
                 yield value, False
 
 
+@pure
 def _root_name(expr: ast.expr) -> str | None:
     """`x` in `x.a[0].b`."""
     while isinstance(expr, ast.Attribute | ast.Subscript):
@@ -147,6 +158,7 @@ def _root_name(expr: ast.expr) -> str | None:
     return expr.id if isinstance(expr, ast.Name) else None
 
 
+@pure
 def _mutations(fn: FunctionNode) -> Iterator[tuple[ast.expr, str]]:
     """Attribute/item stores, deletes and mutating method calls on a parameter."""
     args = fn.args
@@ -177,6 +189,7 @@ def _mutations(fn: FunctionNode) -> Iterator[tuple[ast.expr, str]]:
             yield target, name
 
 
+@pure
 def _suppressed(issue: "Issue", lines: list[str]) -> bool:
     line = lines[issue.start.line] if issue.start.line < len(lines) else ""
     if (found := _IGNORE.search(line)) is None:
@@ -185,11 +198,13 @@ def _suppressed(issue: "Issue", lines: list[str]) -> bool:
     return codes is None or issue.code in {c.strip() for c in codes.split(",")}
 
 
+@pure
 def _is_capture(pattern: ast.pattern) -> bool:
     """`_` or a bare name: matches anything."""
     return isinstance(pattern, ast.MatchAs) and pattern.pattern is None
 
 
+@pure
 def _is_type_pattern(pattern: ast.pattern) -> bool:
     """A pattern that only checks types: `Ok(x)`, `Err(error=e)`, `None`, `A() | B()`."""
     match pattern:
@@ -208,6 +223,7 @@ def _is_type_pattern(pattern: ast.pattern) -> bool:
             return False
 
 
+@pure
 def _is_type_narrowing(node: ast.Match) -> bool:
     """Every case narrows by type, except possibly a trailing catch-all."""
     *cases, last = node.cases
@@ -220,6 +236,7 @@ def _is_type_narrowing(node: ast.Match) -> bool:
     )
 
 
+@pure
 def parse(source: str, path: Path) -> ast.Module | None:
     try:
         return ast.parse(source, filename=str(path))

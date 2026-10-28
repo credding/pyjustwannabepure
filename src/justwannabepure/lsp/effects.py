@@ -5,6 +5,9 @@ import tomllib
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
+from typing import Any
+
+from justwannabepure import pure, shell, side_effect
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +77,7 @@ _PURE = frozenset({"os.fspath", "os.fsencode", "os.fsdecode"})
 _PURE_PREFIXES = ("os.path.",)
 
 
+@pure
 def is_effectful(full_name: str) -> bool:
     if full_name in _EFFECTFUL:
         return True
@@ -88,6 +92,7 @@ class Effects:
 
     patterns: tuple[str, ...] = ()
 
+    @pure
     def __call__(self, full_name: str) -> bool:
         # Project patterns win over the builtin pure exceptions.
         return any(fnmatchcase(full_name, p) for p in self.patterns) or is_effectful(
@@ -98,20 +103,50 @@ class Effects:
 BUILTIN_EFFECTS = Effects()
 
 
-def load_effects(root: Path) -> Effects:
-    """Read `[tool.pyjustwannabepure] side_effects = [...]` from `root/pyproject.toml`."""
+@dataclass(frozen=True)
+class InvalidConfig:
+    message: str
+
+
+@side_effect
+def read_pyproject(root: Path) -> dict[str, Any] | None:
+    """`root/pyproject.toml` parsed, or `None` if it is missing or unreadable."""
     try:
         with (root / "pyproject.toml").open("rb") as f:
-            config = tomllib.load(f)
+            return tomllib.load(f)
     except FileNotFoundError:
-        return Effects()
+        return None
     except (OSError, tomllib.TOMLDecodeError):
         log.exception("could not read %s", root / "pyproject.toml")
-        return Effects()
-    patterns = config.get("tool", {}).get("pyjustwannabepure", {}).get("side_effects")
+        return None
+
+
+@pure
+def effects_from_config(config: dict[str, Any] | None) -> Effects | InvalidConfig:
+    """Validate `[tool.pyjustwannabepure] side_effects = [...]`."""
+    patterns = (
+        (config or {}).get("tool", {}).get("pyjustwannabepure", {}).get("side_effects")
+    )
     if patterns is None:
         return Effects()
     if not isinstance(patterns, list) or not all(isinstance(p, str) for p in patterns):
-        log.warning("tool.pyjustwannabepure.side_effects must be a list of strings")
-        return Effects()
+        return InvalidConfig(
+            "tool.pyjustwannabepure.side_effects must be a list of strings"
+        )
     return Effects(tuple(patterns))
+
+
+@side_effect
+def warn(message: str) -> None:
+    log.warning(message)
+
+
+@shell
+def load_effects(root: Path) -> Effects:
+    """Read `[tool.pyjustwannabepure] side_effects = [...]` from `root/pyproject.toml`."""
+    match effects_from_config(read_pyproject(root)):
+        case Effects() as effects:
+            return effects
+        case InvalidConfig(message=message):
+            warn(message)
+            return Effects()

@@ -9,6 +9,8 @@ from pathlib import Path
 import jedi
 from jedi.api.classes import Name
 
+from justwannabepure import pure
+
 from .markers import Marker, collect_aliases, markers_of, qualified_functions
 
 log = logging.getLogger(__name__)
@@ -28,6 +30,7 @@ class MarkerTable:
     ]  # def line (1-based) -> (qualname, markers)
     by_qualname: dict[str, set[Marker]]  # merged across same-named defs (`if`/`else`)
 
+    @pure
     def lookup(self, line: int, qualname: str) -> set[Marker]:
         if (entry := self.by_line.get(line)) is not None and entry[0] == qualname:
             return entry[1]
@@ -37,6 +40,7 @@ class MarkerTable:
 EMPTY_TABLE = MarkerTable({}, {})
 
 
+@pure
 def marker_table(module: ast.Module) -> MarkerTable:
     aliases = collect_aliases(module)
     by_line: dict[int, tuple[str, set[Marker]]] = {}
@@ -48,6 +52,7 @@ def marker_table(module: ast.Module) -> MarkerTable:
     return MarkerTable(by_line, by_qualname)
 
 
+@pure
 def _qualname(name: Name) -> str:
     """`Dice.roll` for `pkg.effects.Dice.roll`."""
     prefix = f"{name.module_name}."
@@ -71,6 +76,7 @@ class Target:
 NOTHING = Target(frozenset(), frozenset(), frozenset())
 
 
+@pure
 def name_position(expr: ast.expr) -> tuple[int, int] | None:
     """Position (1-based line, 0-based column) of the last name segment of `expr`."""
     match expr:
@@ -182,6 +188,7 @@ class Resolver:
         return table
 
     @staticmethod
+    @pure
     def _parse(source: str, path: Path) -> MarkerTable:
         try:
             return marker_table(ast.parse(source, filename=str(path)))

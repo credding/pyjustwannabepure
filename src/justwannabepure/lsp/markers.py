@@ -5,6 +5,8 @@ import enum
 from collections.abc import Iterator
 from dataclasses import dataclass
 
+from justwannabepure import pure
+
 PACKAGE = "justwannabepure"
 
 type FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef
@@ -27,6 +29,7 @@ class Aliases:
     modules: frozenset[str]  # `import justwannabepure as j` -> {"j"}
 
 
+@pure
 def collect_aliases(module: ast.Module) -> Aliases:
     names: dict[str, Marker] = {}
     modules = {PACKAGE}  # fully qualified `@justwannabepure.pure` always works
@@ -46,6 +49,7 @@ def collect_aliases(module: ast.Module) -> Aliases:
     return Aliases(names, frozenset(modules))
 
 
+@pure
 def decorator_marker(decorator: ast.expr, aliases: Aliases) -> Marker | None:
     match decorator:
         case ast.Name(id=name):
@@ -57,10 +61,12 @@ def decorator_marker(decorator: ast.expr, aliases: Aliases) -> Marker | None:
     return None
 
 
+@pure
 def markers_of(fn: FunctionNode, aliases: Aliases) -> set[Marker]:
     return {m for d in fn.decorator_list if (m := decorator_marker(d, aliases))}
 
 
+@pure
 def qualified_functions(
     node: ast.AST, prefix: str = ""
 ) -> Iterator[tuple[str, FunctionNode]]:
@@ -75,6 +81,7 @@ def qualified_functions(
             yield from qualified_functions(child, prefix)
 
 
+@pure
 def marked_functions(
     module: ast.Module, aliases: Aliases
 ) -> list[tuple[FunctionNode, set[Marker]]]:
