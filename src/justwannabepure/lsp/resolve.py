@@ -9,7 +9,7 @@ from pathlib import Path
 import jedi
 from jedi.api.classes import Name
 
-from justwannabepure import pure
+from justwannabepure import pure, side_effect
 
 from .markers import Marker, collect_aliases, markers_of, qualified_functions
 
@@ -89,6 +89,48 @@ def name_position(expr: ast.expr) -> tuple[int, int] | None:
     return None
 
 
+@dataclass(frozen=True)
+class Definition:
+    """The parts of a Jedi `Name` that `target_from` needs."""
+
+    full_name: str | None
+    type: str
+    module_path: Path | None
+    line: int | None  # 1-based
+    qualname: str
+
+
+def _definition(name: Name) -> Definition:
+    return Definition(
+        name.full_name, name.type, name.module_path, name.line, _qualname(name)
+    )
+
+
+@pure
+def located_functions(defs: list[Definition]) -> list[tuple[Path, int, str]]:
+    """(module path, def line, qualname) of each definition that is a function on disk."""
+    return [
+        (d.module_path, d.line, d.qualname)
+        for d in defs
+        if d.type == "function" and d.module_path is not None and d.line is not None
+    ]
+
+
+@pure
+def target_from(defs: list[Definition], tables: dict[Path, MarkerTable]) -> Target:
+    """Merge the definitions a name resolved to; `tables` has each located function's module."""
+    markers: set[Marker] = set()
+    for path, line, qualname in located_functions(defs):
+        markers |= tables[path].lookup(line, qualname)
+    return Target(
+        frozenset(markers),
+        frozenset(d.full_name for d in defs if d.full_name),
+        frozenset(
+            d.full_name for d in defs if d.full_name and d.type in ("function", "class")
+        ),
+    )
+
+
 class FileScript:
     """A Jedi script plus an index of every name in it by position.
 
@@ -102,6 +144,7 @@ class FileScript:
         self.path = script.path
         self._names: dict[tuple[int, int], Name] | None = None
 
+    @side_effect
     def goto(self, pos: tuple[int, int]) -> list[Name]:
         if self._names is None:
             self._names = self._index()
@@ -109,6 +152,7 @@ class FileScript:
             return name.goto(follow_imports=True)
         return self.script.goto(*pos, follow_imports=True)
 
+    @side_effect
     def _index(self) -> dict[tuple[int, int], Name]:
         try:
             names = self.script.get_names(
@@ -135,6 +179,7 @@ class Resolver:
     def script(self, source: str, path: Path) -> FileScript:
         return FileScript(jedi.Script(code=source, path=path, project=self.project))
 
+    @side_effect
     def resolve(
         self, script: FileScript, expr: ast.expr, current: MarkerTable
     ) -> Target:
@@ -146,26 +191,14 @@ class Resolver:
         except Exception:
             log.exception("jedi goto failed at %s:%s", script.path, pos)
             return NOTHING
-        markers: set[Marker] = set()
-        full_names = {name.full_name for name in names if name.full_name}
-        function_names = {
-            name.full_name
-            for name in names
-            if name.full_name and name.type in ("function", "class")
+        defs = [_definition(name) for name in names]
+        tables = {
+            path: current if path == script.path else self._table(path)
+            for path, _, _ in located_functions(defs)
         }
-        for name in names:
-            if name.type != "function" or name.module_path is None or name.line is None:
-                continue
-            table = (
-                current
-                if name.module_path == script.path
-                else self._table(name.module_path)
-            )
-            markers |= table.lookup(name.line, _qualname(name))
-        return Target(
-            frozenset(markers), frozenset(full_names), frozenset(function_names)
-        )
+        return target_from(defs, tables)
 
+    @side_effect
     def _table(self, path: Path) -> MarkerTable:
         # Keyed by the buffer text for open documents, by mtime for files on disk.
         source = self._open_source(path)

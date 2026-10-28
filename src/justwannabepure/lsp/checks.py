@@ -6,17 +6,18 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from justwannabepure import pure
+from justwannabepure import pure, shell, side_effect
 
 from .effects import BUILTIN_EFFECTS, Effects
 from .markers import (
+    Aliases,
     FunctionNode,
     Marker,
     collect_aliases,
     decorator_marker,
     marked_functions,
 )
-from .resolve import Resolver, marker_table
+from .resolve import MarkerTable, Resolver, Target, marker_table
 
 CONTROL_FLOW: dict[type[ast.stmt], str] = {
     ast.If: "if",
@@ -244,23 +245,33 @@ def parse(source: str, path: Path) -> ast.Module | None:
         return None
 
 
-def check(
-    module: ast.Module,
-    source: str,
-    path: Path,
-    resolver: Resolver,
-    effects: Effects = BUILTIN_EFFECTS,
+@dataclass(frozen=True)
+class Reference:
+    """A callee or a name passed around as a value inside a `@pure` function."""
+
+    function: str  # the `@pure` function's name
+    expr: ast.expr
+    called: bool
+
+
+@pure
+def references_to_resolve(
+    functions: list[tuple[FunctionNode, set[Marker]]],
+) -> list[Reference]:
+    return [
+        Reference(fn.name, expr, called)
+        for fn, markers in functions
+        if Marker.PURE in markers
+        for expr, called in _references(fn)
+    ]
+
+
+@pure
+def local_issues(
+    functions: list[tuple[FunctionNode, set[Marker]]], aliases: Aliases, loc: _Locator
 ) -> list[Issue]:
-    aliases = collect_aliases(module)
-    functions = marked_functions(module, aliases)
-    if not functions:
-        return []
-
-    loc = _Locator(source)
-    current = marker_table(module)
-    script = None
+    """Everything that needs no name resolution: JWP001, JWP003, JWP004, JWP006, JWP007."""
     issues: list[Issue] = []
-
     for fn, markers in functions:
         if Marker.PURE in markers and Marker.SIDE_EFFECT in markers:
             for decorator in fn.decorator_list:
@@ -282,36 +293,6 @@ def check(
                         *loc.header(fn),
                     )
                 )
-            for expr, called in _references(fn):
-                script = script or resolver.script(source, path)
-                target = resolver.resolve(script, expr, current)
-                verb = "calls" if called else "references"
-                name = ast.unparse(expr)
-                if Marker.SIDE_EFFECT in target.markers:
-                    issues.append(
-                        Issue(
-                            "JWP002",
-                            f"@pure function '{fn.name}' {verb} @side_effect function '{name}'",
-                            *loc.span(expr),
-                        )
-                    )
-                if Marker.SHELL in target.markers:
-                    issues.append(
-                        Issue(
-                            "JWP008",
-                            f"@pure function '{fn.name}' {verb} @shell function '{name}'",
-                            *loc.span(expr),
-                        )
-                    )
-                full_names = target.full_names if called else target.function_names
-                if effectful := min(filter(effects, full_names), default=None):
-                    issues.append(
-                        Issue(
-                            "JWP005",
-                            f"@pure function '{fn.name}' {verb} effectful '{effectful}'",
-                            *loc.span(expr),
-                        )
-                    )
             for node in _body_nodes(fn):
                 if isinstance(node, ast.Global):
                     issues.append(
@@ -353,8 +334,86 @@ def check(
                             *loc.keyword(node, keyword),
                         )
                     )
+    return issues
 
+
+@pure
+def reference_issues(
+    refs: list[Reference], targets: list[Target], effects: Effects, loc: _Locator
+) -> list[Issue]:
+    """JWP002, JWP005 and JWP008, from each reference and what it resolved to."""
+    issues: list[Issue] = []
+    for ref, target in zip(refs, targets, strict=True):
+        verb = "calls" if ref.called else "references"
+        name = ast.unparse(ref.expr)
+        if Marker.SIDE_EFFECT in target.markers:
+            issues.append(
+                Issue(
+                    "JWP002",
+                    f"@pure function '{ref.function}' {verb} @side_effect function '{name}'",
+                    *loc.span(ref.expr),
+                )
+            )
+        if Marker.SHELL in target.markers:
+            issues.append(
+                Issue(
+                    "JWP008",
+                    f"@pure function '{ref.function}' {verb} @shell function '{name}'",
+                    *loc.span(ref.expr),
+                )
+            )
+        full_names = target.full_names if ref.called else target.function_names
+        if effectful := min(filter(effects, full_names), default=None):
+            issues.append(
+                Issue(
+                    "JWP005",
+                    f"@pure function '{ref.function}' {verb} effectful '{effectful}'",
+                    *loc.span(ref.expr),
+                )
+            )
+    return issues
+
+
+@pure
+def finalize(issues: list[Issue], lines: list[str]) -> list[Issue]:
+    """Drop suppressed issues and sort by position."""
     return sorted(
-        (issue for issue in issues if not _suppressed(issue, loc.lines)),
+        (issue for issue in issues if not _suppressed(issue, lines)),
         key=lambda i: (i.start.line, i.start.character, i.code),
+    )
+
+
+@side_effect
+def resolve_all(
+    resolver: Resolver,
+    source: str,
+    path: Path,
+    refs: list[Reference],
+    current: MarkerTable,
+) -> list[Target]:
+    if not refs:
+        return []  # don't pay for a Jedi script
+    script = resolver.script(source, path)
+    return [resolver.resolve(script, ref.expr, current) for ref in refs]
+
+
+@shell
+def check(
+    module: ast.Module,
+    source: str,
+    path: Path,
+    resolver: Resolver,
+    effects: Effects = BUILTIN_EFFECTS,
+) -> list[Issue]:
+    aliases = collect_aliases(module)
+    functions = marked_functions(module, aliases)
+    loc = _Locator(source)
+    refs = references_to_resolve(functions)
+    targets = resolve_all(resolver, source, path, refs, marker_table(module))
+    return finalize(
+        [
+            *local_issues(functions, aliases, loc),
+            *reference_issues(refs, targets, effects, loc),
+        ],
+        loc.lines,
     )
