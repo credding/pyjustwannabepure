@@ -81,6 +81,11 @@ Preserve behavior, and don't let the refactor spread into neighboring code.
   through nesting: the unavoidable `try` around the I/O, or a single `if` on its
   outcome (e.g. `rowcount`). A `raise` directly in an `except` body is free.
   Return raw values and let pure code make further decisions.
+- `@side_effect` may call `@pure` functions to build or parse values (SQL
+  parameters, a request body, converting a library object to a dataclass), but
+  not to decide what it does: no `if should_retry(resp):` or
+  `match classify(row):` inside an effect. Return the raw value and let the
+  shell act on the pure decision.
 - Third-party or project effects you can't decorate go in `pyproject.toml`:
 
   ```toml
