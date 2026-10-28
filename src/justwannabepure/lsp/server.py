@@ -2,9 +2,11 @@
 
 import asyncio
 import logging
+from collections.abc import Coroutine
 from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import version
 from pathlib import Path
+from typing import Any
 
 import jedi
 from lsprotocol import types
@@ -13,7 +15,7 @@ from pygls.uris import from_fs_path, to_fs_path
 from pygls.workspace import TextDocument
 from pygls.workspace.position_codec import ServerTextPosition, ServerTextRange
 
-from justwannabepure import pure, side_effect
+from justwannabepure import pure, shell, side_effect
 
 from .checks import Issue, check, parse
 from .effects import Effects, load_effects
@@ -31,7 +33,8 @@ class PurityServer(LanguageServer):
             version("pyjustwannabepure"),
             text_document_sync_kind=types.TextDocumentSyncKind.Full,
         )
-        self.resolver: Resolver | None = None
+        # Replaced with the workspace root's once the client is initialized.
+        self.resolver = Resolver(jedi.Project(Path.cwd()), self.open_source)
         self.effects = Effects()
         # Jedi is not thread-safe, so every check runs on this one worker thread.
         self.executor = ThreadPoolExecutor(
@@ -45,23 +48,20 @@ class PurityServer(LanguageServer):
         return doc.source if doc else None
 
     @side_effect
-    def get_resolver(self) -> Resolver:
-        if self.resolver is None:
-            root = self.workspace.root_path or str(Path.cwd())
-            self.resolver = Resolver(jedi.Project(root), self.open_source)
-            self.effects = load_effects(Path(root))
-        return self.resolver
+    def workspace_root(self) -> Path:
+        return Path(self.workspace.root_path or Path.cwd())
 
     @side_effect
-    def schedule(self, uri: str, delay: float = 0.0) -> None:
-        if task := self.pending.pop(uri, None):
-            task.cancel()
-        self.pending[uri] = asyncio.get_running_loop().create_task(
-            self.validate(uri, delay)
-        )
+    def schedule(self, checks: dict[str, Coroutine[Any, Any, None]]) -> None:
+        """Run each URI's check, cancelling the one already pending for it."""
+        loop = asyncio.get_running_loop()
+        for uri, run in checks.items():
+            if task := self.pending.pop(uri, None):
+                task.cancel()
+            self.pending[uri] = loop.create_task(run)
 
     @side_effect
-    async def validate(self, uri: str, delay: float) -> None:
+    async def validate(self, uri: str, delay: float = 0.0) -> None:
         if delay:
             await asyncio.sleep(delay)
         doc = self.workspace.get_text_document(uri)
@@ -71,11 +71,10 @@ class PurityServer(LanguageServer):
         path = Path(fs_path)
         if (module := parse(source, path)) is None:
             return  # keep the last good diagnostics while the user is mid-edit
-        resolver = self.get_resolver()
         loop = asyncio.get_running_loop()
         try:
             issues = await loop.run_in_executor(
-                self.executor, check, module, source, path, resolver, self.effects
+                self.executor, check, module, source, path, self.resolver, self.effects
             )
         except Exception:
             log.exception("check failed for %s", uri)
@@ -114,24 +113,33 @@ def to_diagnostic(doc: TextDocument, issue: Issue) -> types.Diagnostic:
 server = PurityServer()
 
 
+@server.feature(types.INITIALIZED)
+@shell
+def initialized(ls: PurityServer, params: types.InitializedParams) -> None:
+    root = ls.workspace_root()
+    ls.resolver = Resolver(jedi.Project(root), ls.open_source)
+    ls.effects = load_effects(root)
+
+
 @server.feature(types.TEXT_DOCUMENT_DID_OPEN)
-@side_effect
+@shell
 def did_open(ls: PurityServer, params: types.DidOpenTextDocumentParams) -> None:
-    ls.schedule(params.text_document.uri)
+    uri = params.text_document.uri
+    ls.schedule({uri: ls.validate(uri)})
 
 
 @server.feature(types.TEXT_DOCUMENT_DID_CHANGE)
-@side_effect
+@shell
 def did_change(ls: PurityServer, params: types.DidChangeTextDocumentParams) -> None:
-    ls.schedule(params.text_document.uri, DEBOUNCE_SECONDS)
+    uri = params.text_document.uri
+    ls.schedule({uri: ls.validate(uri, DEBOUNCE_SECONDS)})
 
 
 @server.feature(types.TEXT_DOCUMENT_DID_SAVE)
-@side_effect
+@shell
 def did_save(ls: PurityServer, params: types.DidSaveTextDocumentParams) -> None:
     # A marker added or removed in one module can change diagnostics in any other.
-    for uri in list(ls.workspace.text_documents):
-        ls.schedule(uri)
+    ls.schedule({uri: ls.validate(uri) for uri in ls.workspace.text_documents})
 
 
 @server.feature(types.TEXT_DOCUMENT_DID_CLOSE)

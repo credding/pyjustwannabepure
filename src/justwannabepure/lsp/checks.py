@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from justwannabepure import pure, shell, side_effect
+from justwannabepure import pure, shell
 
 from .effects import BUILTIN_EFFECTS, Effects
 from .markers import (
@@ -396,7 +396,7 @@ def finalize(issues: list[Issue], lines: list[str]) -> list[Issue]:
     )
 
 
-@side_effect
+@shell
 def resolve_all(
     resolver: Resolver,
     source: str,
@@ -404,8 +404,6 @@ def resolve_all(
     refs: list[Reference],
     module: ast.Module,
 ) -> list[Target]:
-    if not refs:
-        return []  # don't pay for a Jedi script or the marker table
     script = resolver.script(source, path)
     current = marker_table(module)
     return [resolver.resolve(script, ref.expr, current) for ref in refs]
@@ -423,7 +421,8 @@ def check(
     functions = marked_functions(module, aliases)
     loc = _Locator(source)
     refs = references_to_resolve(functions)
-    targets = resolve_all(resolver, source, path, refs, module)
+    # Without references, don't pay for a Jedi script or the marker table.
+    targets = resolve_all(resolver, source, path, refs, module) if refs else []
     return finalize(
         [
             *local_issues(functions, aliases, loc),

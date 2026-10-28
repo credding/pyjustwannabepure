@@ -9,7 +9,7 @@ from pathlib import Path
 import jedi
 from jedi.api.classes import Name
 
-from justwannabepure import pure, side_effect
+from justwannabepure import pure, shell, side_effect
 
 from .markers import Marker, collect_aliases, markers_of, qualified_functions
 
@@ -139,29 +139,35 @@ class FileScript:
     gives the same `Name`s up front.
     """
 
-    def __init__(self, script: jedi.Script):
+    def __init__(self, script: jedi.Script, names: dict[tuple[int, int], Name]):
         self.script = script
         self.path = script.path
-        self._names: dict[tuple[int, int], Name] | None = None
+        self._names = names
 
     @side_effect
-    def goto(self, pos: tuple[int, int]) -> list[Name]:
-        if self._names is None:
-            self._names = self._index()
-        if (name := self._names.get(pos)) is not None:
-            return name.goto(follow_imports=True)
-        return self.script.goto(*pos, follow_imports=True)
-
-    @side_effect
-    def _index(self) -> dict[tuple[int, int], Name]:
+    def definitions(self, pos: tuple[int, int] | None) -> list[Definition]:
+        """What the name at `pos` resolves to; nothing if there is no name or Jedi fails."""
+        if pos is None:
+            return []
         try:
-            names = self.script.get_names(
-                all_scopes=True, definitions=True, references=True
-            )
+            if (name := self._names.get(pos)) is not None:
+                names = name.goto(follow_imports=True)
+            else:
+                names = self.script.goto(*pos, follow_imports=True)
         except Exception:
-            log.exception("jedi get_names failed for %s", self.path)
-            return {}
-        return {(name.line, name.column): name for name in names}
+            log.exception("jedi goto failed at %s:%s", self.path, pos)
+            return []
+        return [_definition(name) for name in names]
+
+
+@side_effect
+def index_names(script: jedi.Script) -> dict[tuple[int, int], Name]:
+    try:
+        names = script.get_names(all_scopes=True, definitions=True, references=True)
+    except Exception:
+        log.exception("jedi get_names failed for %s", script.path)
+        return {}
+    return {(name.line, name.column): name for name in names}
 
 
 class Resolver:
@@ -176,22 +182,17 @@ class Resolver:
         )
         self._cache: dict[Path, tuple[object, MarkerTable]] = {}
 
+    @shell
     def script(self, source: str, path: Path) -> FileScript:
-        return FileScript(jedi.Script(code=source, path=path, project=self.project))
+        script = jedi.Script(code=source, path=path, project=self.project)
+        return FileScript(script, index_names(script))
 
-    @side_effect
+    @shell
     def resolve(
         self, script: FileScript, expr: ast.expr, current: MarkerTable
     ) -> Target:
         """Resolve a callee or a reference to a function (`roll` in `map(roll, xs)`)."""
-        if (pos := name_position(expr)) is None:
-            return NOTHING
-        try:
-            names = script.goto(pos)
-        except Exception:
-            log.exception("jedi goto failed at %s:%s", script.path, pos)
-            return NOTHING
-        defs = [_definition(name) for name in names]
+        defs = script.definitions(name_position(expr))
         tables = {
             path: current if path == script.path else self._table(path)
             for path, _, _ in located_functions(defs)
