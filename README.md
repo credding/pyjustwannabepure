@@ -1,8 +1,8 @@
-# justwannabepure
+# pyjustwannabepure
 
 **Functional core, imperative shell — checked by your editor.**
 
-`justwannabepure` gives you three tiny decorators to label what your functions
+`pyjustwannabepure` gives you three tiny decorators to label what your functions
 are allowed to do, and a language server (plus a CLI) that tells you when the
 code doesn't match the label.
 
@@ -35,6 +35,23 @@ Or install it globally as a tool:
 ```console
 $ uv tool install 'pyjustwannabepure[lsp]'
 ```
+
+## Agent skill
+
+[`skills/pyjustwannabepure`](skills/pyjustwannabepure) is an
+[Agent Skill](https://agentskills.io) that teaches coding agents to write
+functional core / imperative shell code, test the core, and run
+`pyjustwannabepure check`. To apply it to all new code, mention it in your
+`AGENTS.md` or `CLAUDE.md`.
+
+Install it for any agent that supports skills:
+
+```console
+$ npx skills add credding/pyjustwannabepure
+```
+
+Or copy the folder into your agent's skills directory (for example
+`.claude/skills/` or `.agents/skills/`).
 
 ## A quick example
 
