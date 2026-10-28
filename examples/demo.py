@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import effects
 from effects import Dice
 from effects import roll as r
@@ -53,6 +55,17 @@ def confused() -> None: ...
 def announce() -> None:
     print(r(6))  # JWP009
     main()  # JWP010
+
+
+@side_effect
+def read_config(path: str) -> str | None:
+    try:  # fine: a side effect gets one control-flow statement
+        text = Path(path).read_text()
+    except OSError:
+        return None
+    if not text:  # JWP011
+        raise ValueError(path)  # JWP011
+    return text
 
 
 @shell

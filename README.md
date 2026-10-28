@@ -168,6 +168,7 @@ def main() -> None:
 | `JWP008` | `@pure` functions must not call `@shell` functions                                                    |
 | `JWP009` | `@side_effect` functions must not call or pass around other `@side_effect` functions                  |
 | `JWP010` | `@side_effect` functions must not call or pass around `@shell` functions                              |
+| `JWP011` | `@side_effect` functions may contain at most one control-flow statement                               |
 
 ### Ignoring a line
 

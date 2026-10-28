@@ -100,6 +100,16 @@ class _Locator:
         )
 
     @pure
+    def flow_keyword(self, stmt: ast.stmt) -> str:
+        """The `CONTROL_FLOW` keyword, or `elif` for an `If` that is one."""
+        keyword = CONTROL_FLOW[type(stmt)]
+        start = self.position(stmt.lineno, stmt.col_offset)
+        text = self.lines[start.line] if start.line < len(self.lines) else ""
+        if keyword == "if" and text.startswith("elif", start.character):
+            return "elif"
+        return keyword
+
+    @pure
     def keyword(self, stmt: ast.stmt, keyword: str) -> tuple[Position, Position]:
         start = self.position(stmt.lineno, stmt.col_offset)
         return start, Position(start.line, start.character + len(keyword))
@@ -123,6 +133,29 @@ def _own_nodes(fn: FunctionNode) -> Iterator[ast.AST]:
             node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda | ast.ClassDef
         ):
             stack.extend(ast.iter_child_nodes(node))
+
+
+@pure
+def _side_effect_flow(fn: FunctionNode) -> list[ast.stmt]:
+    """Control-flow statements in source order, except a `raise` directly in an `except` body."""
+    nodes = list(_body_nodes(fn))
+    handler_raises = {
+        id(stmt)
+        for node in nodes
+        if isinstance(node, ast.ExceptHandler)
+        for stmt in node.body
+        if isinstance(stmt, ast.Raise)
+    }
+    return sorted(
+        (
+            node
+            for node in nodes
+            if isinstance(node, ast.stmt)
+            and type(node) in CONTROL_FLOW
+            and id(node) not in handler_raises
+        ),
+        key=lambda node: (node.lineno, node.col_offset),
+    )
 
 
 @pure
@@ -276,7 +309,7 @@ def references_to_resolve(
 def local_issues(
     functions: list[tuple[FunctionNode, set[Marker]]], aliases: Aliases, loc: _Locator
 ) -> list[Issue]:
-    """Everything that needs no name resolution: JWP001, JWP003, JWP004, JWP006, JWP007."""
+    """Everything that needs no name resolution: JWP001, JWP003, JWP004, JWP006, JWP007, JWP011."""
     issues: list[Issue] = []
     for fn, markers in functions:
         if Marker.PURE in markers and Marker.SIDE_EFFECT in markers:
@@ -340,6 +373,18 @@ def local_issues(
                             *loc.keyword(node, keyword),
                         )
                     )
+
+        if Marker.SIDE_EFFECT in markers:
+            # The first structure is the one a side effect is allowed.
+            for node in _side_effect_flow(fn)[1:]:
+                keyword = loc.flow_keyword(node)
+                issues.append(
+                    Issue(
+                        "JWP011",
+                        f"@side_effect function '{fn.name}' has more than one control-flow statement ('{keyword}')",
+                        *loc.keyword(node, keyword),
+                    )
+                )
     return issues
 
 

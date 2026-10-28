@@ -12,6 +12,7 @@
 | JWP008 | `@pure` calls a `@shell` function                                 | The dependency is backwards: shells call pure code, never the reverse. Extract the logic the pure function needs into another `@pure` function.             |
 | JWP009 | `@side_effect` calls or passes around another `@side_effect`      | Side effects are leaves. Move the composition into a `@shell` that calls each effect in turn and passes results between them. If the inner call is just a helper, inline it or leave the helper undecorated. |
 | JWP010 | `@side_effect` calls or passes around a `@shell` function         | The dependency is backwards: shells call side effects, never the reverse. Have the caller be (or move into) a `@shell` that calls both.                   |
+| JWP011 | `@side_effect` has more than one `if`/`elif`/`match`/`try`/`for`/`while`/`raise`/`assert`, counted through nesting | Keep the one structure the I/O needs (the `try` that turns an exception into a result value, or the `if` on `rowcount`) and move the rest into `@pure` code: return the raw value and let pure code decide, or have pure code compute the list a single loop acts on. Guards on inputs belong in the caller. A `raise` directly in an `except` body doesn't count. |
 
 If a diagnostic is a false positive (the call really is pure), suppress it on
 that line with `# jwp: ignore[JWPxxx]` and add a comment saying why.

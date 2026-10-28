@@ -252,6 +252,77 @@ def test_shell_type_narrowing_match_body_still_checked(tmp_path: Path) -> None:
     assert "'if'" in issue.message
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        # one `try`, several handlers, translating and re-raising
+        (
+            "try:\n        return open(x).read()\n    except OSError as e:\n        return e\n"
+            "    except UnicodeError as e:\n        raise ValueError(x) from e\n"
+            "    except KeyError:\n        raise"
+        ),
+        # an idempotent update's rowcount check
+        "cur = x.execute('UPDATE')\n    if cur.rowcount == 0:\n        return None\n    return cur",
+        "if x:\n        pass\n    else:\n        pass",
+        "for line in x:\n        print(line)\n        continue",
+        "while x:\n        break",
+        "match x:\n        case 1: pass\n        case _: pass",
+        "with open(x) as fh:\n        try:\n            fh.read()\n        finally:\n            pass",
+        "y = 1 if x else 2\n    print([z for z in x if z], x and y)",
+        "raise ValueError(x)",
+    ],
+)
+def test_side_effect_single_control_flow_allowed(tmp_path: Path, body: str) -> None:
+    assert run(tmp_path, f"@side_effect\ndef f(x):\n    {body}\n") == []
+
+
+@pytest.mark.parametrize(
+    ("body", "keyword", "lines"),
+    [
+        ("if x:\n        pass\n    elif x:\n        pass", "elif", [5]),
+        ("if x:\n        pass\n    else:\n        if x:\n            pass", "if", [6]),
+        ("for y in x:\n        if y:\n            print(y)", "if", [4]),
+        (
+            "for y in x:\n        print(y)\n    for y in x:\n        print(y)",
+            "for",
+            [5],
+        ),
+        (
+            "if x is None:\n        return\n    try:\n        x()\n    except E:\n        pass",
+            "try",
+            [5],
+        ),
+        ("if x:\n        raise ValueError(x)", "raise", [4]),
+        # the `raise` is not directly in the handler, so it counts too
+        (
+            "try:\n        pass\n    except E:\n        if x:\n            raise",
+            "if",
+            [6, 7],
+        ),
+        ("try:\n        pass\n    except E:\n        assert x", "assert", [6]),
+        ("if x: pass\n    def inner():\n        while x: pass", "while", [5]),
+    ],
+)
+def test_side_effect_second_control_flow(
+    tmp_path: Path, body: str, keyword: str, lines: list[int]
+) -> None:
+    issues = run(tmp_path, f"@side_effect\ndef f(x):\n    {body}\n")
+    assert codes(issues) == [("JWP011", line) for line in lines]
+    assert f"'{keyword}'" in issues[0].message
+    assert issues[0].end.character - issues[0].start.character == len(keyword)
+
+
+def test_side_effect_control_flow_suppressed(tmp_path: Path) -> None:
+    source = """
+    @side_effect
+    def f(x):
+        for y in x:
+            if y:  # jwp: ignore[JWP011]
+                print(y)
+    """
+    assert run(tmp_path, source) == []
+
+
 def test_non_ascii_columns_are_code_points(tmp_path: Path) -> None:
     source = """
     @side_effect
