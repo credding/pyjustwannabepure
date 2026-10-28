@@ -469,3 +469,24 @@ def test_open_buffer_line_drift(
     module = parse(source, path)
     assert module is not None
     assert codes(check(module, source, path, resolver)) == expected
+
+
+def test_unmarked_module_skips_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Files without `@pure` references must not pay for a Jedi script or the marker table."""
+
+    def fail(*args: object) -> None:
+        raise AssertionError("should not be called")
+
+    monkeypatch.setattr("justwannabepure.lsp.checks.marker_table", fail)
+    monkeypatch.setattr(Resolver, "script", fail)
+    source = (
+        HEADER
+        + "import os\n\ndef f():\n    return os.getcwd()\n\n@shell\ndef g(x):\n    if x: pass\n"
+    )
+    module = parse(source, tmp_path / "m.py")
+    assert module is not None
+    resolver = Resolver(jedi.Project(tmp_path))
+    issues = check(module, source, tmp_path / "m.py", resolver)
+    assert [i.code for i in issues] == ["JWP003"]

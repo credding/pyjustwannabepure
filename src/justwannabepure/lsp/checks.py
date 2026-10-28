@@ -17,7 +17,7 @@ from .markers import (
     decorator_marker,
     marked_functions,
 )
-from .resolve import MarkerTable, Resolver, Target, marker_table
+from .resolve import Resolver, Target, marker_table
 
 CONTROL_FLOW: dict[type[ast.stmt], str] = {
     ast.If: "if",
@@ -389,11 +389,12 @@ def resolve_all(
     source: str,
     path: Path,
     refs: list[Reference],
-    current: MarkerTable,
+    module: ast.Module,
 ) -> list[Target]:
     if not refs:
-        return []  # don't pay for a Jedi script
+        return []  # don't pay for a Jedi script or the marker table
     script = resolver.script(source, path)
+    current = marker_table(module)
     return [resolver.resolve(script, ref.expr, current) for ref in refs]
 
 
@@ -409,7 +410,7 @@ def check(
     functions = marked_functions(module, aliases)
     loc = _Locator(source)
     refs = references_to_resolve(functions)
-    targets = resolve_all(resolver, source, path, refs, marker_table(module))
+    targets = resolve_all(resolver, source, path, refs, module)
     return finalize(
         [
             *local_issues(functions, aliases, loc),
