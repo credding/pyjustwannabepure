@@ -11,4 +11,4 @@ def roll(sides: int) -> int:
 class Dice:
     @side_effect
     def roll(self) -> int:
-        return roll(6)
+        return random.randint(1, 6)

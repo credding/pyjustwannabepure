@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from justwannabepure import pure, shell, side_effect
+from justwannabepure import pure, shell
 
 from .effects import BUILTIN_EFFECTS, Effects
 from .markers import (
@@ -100,6 +100,16 @@ class _Locator:
         )
 
     @pure
+    def flow_keyword(self, stmt: ast.stmt) -> str:
+        """The `CONTROL_FLOW` keyword, or `elif` for an `If` that is one."""
+        keyword = CONTROL_FLOW[type(stmt)]
+        start = self.position(stmt.lineno, stmt.col_offset)
+        text = self.lines[start.line] if start.line < len(self.lines) else ""
+        if keyword == "if" and text.startswith("elif", start.character):
+            return "elif"
+        return keyword
+
+    @pure
     def keyword(self, stmt: ast.stmt, keyword: str) -> tuple[Position, Position]:
         start = self.position(stmt.lineno, stmt.col_offset)
         return start, Position(start.line, start.character + len(keyword))
@@ -123,6 +133,29 @@ def _own_nodes(fn: FunctionNode) -> Iterator[ast.AST]:
             node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda | ast.ClassDef
         ):
             stack.extend(ast.iter_child_nodes(node))
+
+
+@pure
+def _side_effect_flow(fn: FunctionNode) -> list[ast.stmt]:
+    """Control-flow statements in source order, except a `raise` directly in an `except` body."""
+    nodes = list(_body_nodes(fn))
+    handler_raises = {
+        id(stmt)
+        for node in nodes
+        if isinstance(node, ast.ExceptHandler)
+        for stmt in node.body
+        if isinstance(stmt, ast.Raise)
+    }
+    return sorted(
+        (
+            node
+            for node in nodes
+            if isinstance(node, ast.stmt)
+            and type(node) in CONTROL_FLOW
+            and id(node) not in handler_raises
+        ),
+        key=lambda node: (node.lineno, node.col_offset),
+    )
 
 
 @pure
@@ -247,11 +280,16 @@ def parse(source: str, path: Path) -> ast.Module | None:
 
 @dataclass(frozen=True)
 class Reference:
-    """A callee or a name passed around as a value inside a `@pure` function."""
+    """A callee or a name passed around as a value inside a `@pure` or `@side_effect` function."""
 
-    function: str  # the `@pure` function's name
+    function: str  # the referencing function's name
+    role: Marker  # its marker: PURE or SIDE_EFFECT
     expr: ast.expr
     called: bool
+
+
+# Markers whose functions restrict what they may reference.
+_REFERENCING = (Marker.PURE, Marker.SIDE_EFFECT)
 
 
 @pure
@@ -259,9 +297,10 @@ def references_to_resolve(
     functions: list[tuple[FunctionNode, set[Marker]]],
 ) -> list[Reference]:
     return [
-        Reference(fn.name, expr, called)
+        Reference(fn.name, role, expr, called)
         for fn, markers in functions
-        if Marker.PURE in markers
+        for role in _REFERENCING
+        if role in markers
         for expr, called in _references(fn)
     ]
 
@@ -270,7 +309,7 @@ def references_to_resolve(
 def local_issues(
     functions: list[tuple[FunctionNode, set[Marker]]], aliases: Aliases, loc: _Locator
 ) -> list[Issue]:
-    """Everything that needs no name resolution: JWP001, JWP003, JWP004, JWP006, JWP007."""
+    """Everything that needs no name resolution: JWP001, JWP003, JWP004, JWP006, JWP007, JWP011."""
     issues: list[Issue] = []
     for fn, markers in functions:
         if Marker.PURE in markers and Marker.SIDE_EFFECT in markers:
@@ -334,40 +373,59 @@ def local_issues(
                             *loc.keyword(node, keyword),
                         )
                     )
+
+        if Marker.SIDE_EFFECT in markers:
+            # The first structure is the one a side effect is allowed.
+            for node in _side_effect_flow(fn)[1:]:
+                keyword = loc.flow_keyword(node)
+                issues.append(
+                    Issue(
+                        "JWP011",
+                        f"@side_effect function '{fn.name}' has more than one control-flow statement ('{keyword}')",
+                        *loc.keyword(node, keyword),
+                    )
+                )
     return issues
+
+
+# (caller role, callee marker) -> code
+_FORBIDDEN_CALLS: dict[tuple[Marker, Marker], str] = {
+    (Marker.PURE, Marker.SIDE_EFFECT): "JWP002",
+    (Marker.PURE, Marker.SHELL): "JWP008",
+    (Marker.SIDE_EFFECT, Marker.SIDE_EFFECT): "JWP009",
+    (Marker.SIDE_EFFECT, Marker.SHELL): "JWP010",
+}
 
 
 @pure
 def reference_issues(
     refs: list[Reference], targets: list[Target], effects: Effects, loc: _Locator
 ) -> list[Issue]:
-    """JWP002, JWP005 and JWP008, from each reference and what it resolved to."""
+    """JWP002, JWP005, JWP008, JWP009 and JWP010, from each reference and what it resolved to."""
     issues: list[Issue] = []
     for ref, target in zip(refs, targets, strict=True):
         verb = "calls" if ref.called else "references"
         name = ast.unparse(ref.expr)
-        if Marker.SIDE_EFFECT in target.markers:
-            issues.append(
-                Issue(
-                    "JWP002",
-                    f"@pure function '{ref.function}' {verb} @side_effect function '{name}'",
-                    *loc.span(ref.expr),
+        caller = f"@{ref.role.value} function '{ref.function}'"
+        for callee in (Marker.SIDE_EFFECT, Marker.SHELL):
+            if callee in target.markers and (
+                code := _FORBIDDEN_CALLS.get((ref.role, callee))
+            ):
+                issues.append(
+                    Issue(
+                        code,
+                        f"{caller} {verb} @{callee.value} function '{name}'",
+                        *loc.span(ref.expr),
+                    )
                 )
-            )
-        if Marker.SHELL in target.markers:
-            issues.append(
-                Issue(
-                    "JWP008",
-                    f"@pure function '{ref.function}' {verb} @shell function '{name}'",
-                    *loc.span(ref.expr),
-                )
-            )
+        if ref.role is not Marker.PURE:
+            continue
         full_names = target.full_names if ref.called else target.function_names
         if effectful := min(filter(effects, full_names), default=None):
             issues.append(
                 Issue(
                     "JWP005",
-                    f"@pure function '{ref.function}' {verb} effectful '{effectful}'",
+                    f"{caller} {verb} effectful '{effectful}'",
                     *loc.span(ref.expr),
                 )
             )
@@ -383,7 +441,7 @@ def finalize(issues: list[Issue], lines: list[str]) -> list[Issue]:
     )
 
 
-@side_effect
+@shell
 def resolve_all(
     resolver: Resolver,
     source: str,
@@ -391,8 +449,6 @@ def resolve_all(
     refs: list[Reference],
     module: ast.Module,
 ) -> list[Target]:
-    if not refs:
-        return []  # don't pay for a Jedi script or the marker table
     script = resolver.script(source, path)
     current = marker_table(module)
     return [resolver.resolve(script, ref.expr, current) for ref in refs]
@@ -410,7 +466,8 @@ def check(
     functions = marked_functions(module, aliases)
     loc = _Locator(source)
     refs = references_to_resolve(functions)
-    targets = resolve_all(resolver, source, path, refs, module)
+    # Without references, don't pay for a Jedi script or the marker table.
+    targets = resolve_all(resolver, source, path, refs, module) if refs else []
     return finalize(
         [
             *local_issues(functions, aliases, loc),

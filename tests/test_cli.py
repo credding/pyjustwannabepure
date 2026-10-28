@@ -16,6 +16,7 @@ from justwannabepure.cli import (
     issues_report,
     main,
     missing_dependency,
+    python_files,
     summary,
     to_command,
 )
@@ -122,6 +123,42 @@ def test_version(capsys: pytest.CaptureFixture[str]) -> None:
 )
 def test_is_skipped(parts: tuple[str, ...], expected: bool) -> None:
     assert is_skipped(parts) is expected
+
+
+@pytest.mark.parametrize(
+    ("root", "candidates", "expected"),
+    [
+        (
+            Path("/r/a.py"),
+            [Path("/r/a.py")],
+            [Path("/r/a.py")],
+        ),  # a file given directly
+        (Path("/r"), [], []),
+        (
+            Path("/r"),
+            [
+                Path("/r/a.py"),
+                Path("/r/.venv/b.py"),
+                Path("/r/p/build/c.py"),
+                Path("/r/p/d.py"),
+            ],
+            [Path("/r/a.py"), Path("/r/p/d.py")],
+        ),
+        # only directories below the root are skipped
+        (
+            Path("/r/.hidden/build"),
+            [Path("/r/.hidden/build/a.py")],
+            [Path("/r/.hidden/build/a.py")],
+        ),
+        (
+            Path("/r"),
+            [Path("/r/.a.py")],
+            [Path("/r/.a.py")],
+        ),  # a dotted file name is not a directory
+    ],
+)
+def test_python_files(root: Path, candidates: list[Path], expected: list[Path]) -> None:
+    assert python_files(root, candidates) == expected
 
 
 @pytest.mark.parametrize(

@@ -4,12 +4,13 @@ Both commands need the `lsp` extra (jedi, pygls); the decorators themselves do n
 """
 
 import argparse
+import importlib
 import sys
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, TextIO
 
 from justwannabepure import pure, shell, side_effect
 
@@ -26,6 +27,12 @@ LSP_MODULES = {"jedi", "parso", "pygls", "lsprotocol", "cattrs", "attrs"}
 @dataclass(frozen=True)
 class CheckCommand:
     name: ClassVar[str] = "check"
+    # Imported up front, so a missing `lsp` extra is reported before any work starts.
+    modules: ClassVar[tuple[str, ...]] = (
+        "justwannabepure.lsp.checks",
+        "justwannabepure.lsp.effects",
+        "justwannabepure.lsp.resolve",
+    )
     paths: list[Path]
     root: Path
 
@@ -33,6 +40,7 @@ class CheckCommand:
 @dataclass(frozen=True)
 class ServeCommand:
     name: ClassVar[str] = "server"
+    modules: ClassVar[tuple[str, ...]] = ("justwannabepure.lsp.server",)
 
 
 @dataclass(frozen=True)
@@ -49,6 +57,12 @@ class FileReport:
 @pure
 def is_skipped(relative_dirs: Sequence[str]) -> bool:
     return any(part.startswith(".") or part in SKIP_DIRS for part in relative_dirs)
+
+
+@pure
+def python_files(root: Path, candidates: Sequence[Path]) -> list[Path]:
+    """The candidates found under `root`, minus those in skipped directories."""
+    return [c for c in candidates if not is_skipped(c.relative_to(root).parts[:-1])]
 
 
 @pure
@@ -128,14 +142,8 @@ def to_command(args: argparse.Namespace) -> CheckCommand | ServeCommand:
 
 
 @side_effect
-def iter_python_files(paths: Sequence[Path]) -> Iterator[Path]:
-    for path in paths:
-        if path.is_file():
-            yield path
-            continue
-        for candidate in sorted(path.rglob("*.py")):
-            if not is_skipped(candidate.relative_to(path).parts[:-1]):
-                yield candidate
+def candidate_files(path: Path) -> list[Path]:
+    return [path] if path.is_file() else sorted(path.rglob("*.py"))
 
 
 @side_effect
@@ -147,11 +155,9 @@ def read_source(path: Path) -> str | ReadError:
 
 
 @side_effect
-def emit(report: FileReport) -> None:
-    for line in report.issues:
-        print(line)
-    for line in report.errors:
-        print(line, file=sys.stderr)
+def print_lines(lines: Sequence[str], file: TextIO) -> None:
+    for line in lines:
+        print(line, file=file)
 
 
 @side_effect
@@ -161,10 +167,26 @@ def emit_summary(message: str | None) -> None:
 
 
 @side_effect
+def missing_module(modules: Sequence[str]) -> str | None:
+    """The name of the module whose import failed, if any."""
+    try:
+        list(map(importlib.import_module, modules))
+    except ModuleNotFoundError as e:
+        return e.name
+    return None
+
+
+@side_effect
 def require_paths(parser: argparse.ArgumentParser, paths: Sequence[Path]) -> None:
     missing = [p for p in paths if not p.exists()]
     if missing:
         parser.error(f"no such file or directory: {', '.join(map(str, missing))}")
+
+
+@shell
+def emit(report: FileReport) -> None:
+    print_lines(report.issues, sys.stdout)
+    print_lines(report.errors, sys.stderr)
 
 
 @shell
@@ -204,7 +226,9 @@ def check_paths(paths: Sequence[Path], root: Path) -> int:
     resolver = Resolver(jedi.Project(root))
     effects = load_effects(root)
     reports = [
-        check_file(path, root, resolver, effects) for path in iter_python_files(paths)
+        check_file(file, root, resolver, effects)
+        for path in paths
+        for file in python_files(path, candidate_files(path))
     ]
     emit_summary(summary(reports))
     return exit_code(reports)
@@ -228,23 +252,16 @@ def run(parser: argparse.ArgumentParser, command: CheckCommand | ServeCommand) -
             return check_paths([p.resolve() for p in paths], root.resolve())
 
 
-@side_effect
-def run_guarded(
-    parser: argparse.ArgumentParser, command: CheckCommand | ServeCommand
-) -> int:
-    try:
-        return run(parser, command)
-    except ModuleNotFoundError as e:
-        message = missing_dependency(command.name, e.name)
-        if message is None:
-            raise
-        parser.exit(2, message)
-
-
 @shell
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser(version("pyjustwannabepure"))
-    return run_guarded(parser, to_command(parser.parse_args(argv)))
+    command = to_command(parser.parse_args(argv))
+    # Any other failed import is left to raise again from `run`.
+    match missing_dependency(command.name, missing_module(command.modules)):
+        case str() as message:
+            parser.exit(2, message)
+        case None:
+            return run(parser, command)
 
 
 if __name__ == "__main__":

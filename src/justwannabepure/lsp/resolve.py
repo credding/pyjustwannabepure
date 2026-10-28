@@ -9,7 +9,7 @@ from pathlib import Path
 import jedi
 from jedi.api.classes import Name
 
-from justwannabepure import pure, side_effect
+from justwannabepure import pure, shell, side_effect
 
 from .markers import Marker, collect_aliases, markers_of, qualified_functions
 
@@ -139,29 +139,57 @@ class FileScript:
     gives the same `Name`s up front.
     """
 
-    def __init__(self, script: jedi.Script):
+    def __init__(self, script: jedi.Script, names: dict[tuple[int, int], Name]):
         self.script = script
         self.path = script.path
-        self._names: dict[tuple[int, int], Name] | None = None
+        self._names = names
 
     @side_effect
-    def goto(self, pos: tuple[int, int]) -> list[Name]:
-        if self._names is None:
-            self._names = self._index()
-        if (name := self._names.get(pos)) is not None:
-            return name.goto(follow_imports=True)
-        return self.script.goto(*pos, follow_imports=True)
-
-    @side_effect
-    def _index(self) -> dict[tuple[int, int], Name]:
+    def definitions(self, pos: tuple[int, int]) -> list[Definition]:
+        """What the name at `pos` resolves to; nothing if Jedi fails."""
+        name = self._names.get(pos)
         try:
-            names = self.script.get_names(
-                all_scopes=True, definitions=True, references=True
+            names = (
+                name.goto(follow_imports=True)
+                if name is not None
+                else self.script.goto(*pos, follow_imports=True)
             )
         except Exception:
-            log.exception("jedi get_names failed for %s", self.path)
-            return {}
-        return {(name.line, name.column): name for name in names}
+            log.exception("jedi goto failed at %s:%s", self.path, pos)
+            return []
+        return [_definition(name) for name in names]
+
+
+@side_effect
+def index_names(script: jedi.Script) -> dict[tuple[int, int], Name]:
+    try:
+        names = script.get_names(all_scopes=True, definitions=True, references=True)
+    except Exception:
+        log.exception("jedi get_names failed for %s", script.path)
+        return {}
+    return {(name.line, name.column): name for name in names}
+
+
+@side_effect
+def mtime(path: Path) -> int | None:
+    """`None` for a file that can't be stat'ed, so it gets an empty table."""
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return None
+
+
+@side_effect
+def read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+@pure
+def cached(entry: tuple[object, MarkerTable] | None, key: object) -> MarkerTable | None:
+    return entry[1] if entry is not None and entry[0] == key else None
 
 
 class Resolver:
@@ -176,49 +204,37 @@ class Resolver:
         )
         self._cache: dict[Path, tuple[object, MarkerTable]] = {}
 
+    @shell
     def script(self, source: str, path: Path) -> FileScript:
-        return FileScript(jedi.Script(code=source, path=path, project=self.project))
+        script = jedi.Script(code=source, path=path, project=self.project)
+        return FileScript(script, index_names(script))
 
-    @side_effect
+    @shell
     def resolve(
         self, script: FileScript, expr: ast.expr, current: MarkerTable
     ) -> Target:
         """Resolve a callee or a reference to a function (`roll` in `map(roll, xs)`)."""
-        if (pos := name_position(expr)) is None:
-            return NOTHING
-        try:
-            names = script.goto(pos)
-        except Exception:
-            log.exception("jedi goto failed at %s:%s", script.path, pos)
-            return NOTHING
-        defs = [_definition(name) for name in names]
+        pos = name_position(expr)
+        defs = script.definitions(pos) if pos is not None else []
         tables = {
             path: current if path == script.path else self._table(path)
             for path, _, _ in located_functions(defs)
         }
         return target_from(defs, tables)
 
-    @side_effect
+    @shell
     def _table(self, path: Path) -> MarkerTable:
         # Keyed by the buffer text for open documents, by mtime for files on disk.
         source = self._open_source(path)
-        if source is not None:
-            key: object = source
-        else:
-            try:
-                key = path.stat().st_mtime_ns
-            except OSError:
-                return EMPTY_TABLE
-        if (cached := self._cache.get(path)) and cached[0] == key:
-            return cached[1]
-        if source is None:
-            try:
-                source = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                source = ""
-        table = self._parse(source, path)
-        self._cache[path] = (key, table)
-        return table
+        key: object = source if source is not None else mtime(path)
+        match cached(self._cache.get(path), key):
+            case MarkerTable() as table:
+                return table
+            case None:
+                text = source if source is not None else read_text(path)
+                table = self._parse(text, path)
+                self._cache[path] = (key, table)
+                return table
 
     @staticmethod
     @pure
