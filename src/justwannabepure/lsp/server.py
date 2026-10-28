@@ -13,6 +13,8 @@ from pygls.uris import from_fs_path, to_fs_path
 from pygls.workspace import TextDocument
 from pygls.workspace.position_codec import ServerTextPosition, ServerTextRange
 
+from justwannabepure import pure, side_effect
+
 from .checks import Issue, check, parse
 from .effects import Effects, load_effects
 from .resolve import Resolver
@@ -37,10 +39,12 @@ class PurityServer(LanguageServer):
         )
         self.pending: dict[str, asyncio.Task[None]] = {}
 
+    @side_effect
     def open_source(self, path: Path) -> str | None:
         doc = self.workspace.text_documents.get(from_fs_path(str(path)) or "")
         return doc.source if doc else None
 
+    @side_effect
     def get_resolver(self) -> Resolver:
         if self.resolver is None:
             root = self.workspace.root_path or str(Path.cwd())
@@ -48,6 +52,7 @@ class PurityServer(LanguageServer):
             self.effects = load_effects(Path(root))
         return self.resolver
 
+    @side_effect
     def schedule(self, uri: str, delay: float = 0.0) -> None:
         if task := self.pending.pop(uri, None):
             task.cancel()
@@ -55,12 +60,13 @@ class PurityServer(LanguageServer):
             self.validate(uri, delay)
         )
 
+    @side_effect
     async def validate(self, uri: str, delay: float) -> None:
         if delay:
             await asyncio.sleep(delay)
         doc = self.workspace.get_text_document(uri)
         source, fs_path = doc.source, to_fs_path(uri)
-        if fs_path is None or not fs_path.endswith((".py", ".pyi")):
+        if fs_path is None or not is_python_path(fs_path):
             return
         path = Path(fs_path)
         if (module := parse(source, path)) is None:
@@ -85,6 +91,12 @@ class PurityServer(LanguageServer):
         )
 
 
+@pure
+def is_python_path(fs_path: str) -> bool:
+    return fs_path.endswith((".py", ".pyi"))
+
+
+@pure
 def to_diagnostic(doc: TextDocument, issue: Issue) -> types.Diagnostic:
     server_range = ServerTextRange(
         start=ServerTextPosition(issue.start.line, issue.start.character),
@@ -103,16 +115,19 @@ server = PurityServer()
 
 
 @server.feature(types.TEXT_DOCUMENT_DID_OPEN)
+@side_effect
 def did_open(ls: PurityServer, params: types.DidOpenTextDocumentParams) -> None:
     ls.schedule(params.text_document.uri)
 
 
 @server.feature(types.TEXT_DOCUMENT_DID_CHANGE)
+@side_effect
 def did_change(ls: PurityServer, params: types.DidChangeTextDocumentParams) -> None:
     ls.schedule(params.text_document.uri, DEBOUNCE_SECONDS)
 
 
 @server.feature(types.TEXT_DOCUMENT_DID_SAVE)
+@side_effect
 def did_save(ls: PurityServer, params: types.DidSaveTextDocumentParams) -> None:
     # A marker added or removed in one module can change diagnostics in any other.
     for uri in list(ls.workspace.text_documents):
@@ -120,6 +135,7 @@ def did_save(ls: PurityServer, params: types.DidSaveTextDocumentParams) -> None:
 
 
 @server.feature(types.TEXT_DOCUMENT_DID_CLOSE)
+@side_effect
 def did_close(ls: PurityServer, params: types.DidCloseTextDocumentParams) -> None:
     uri = params.text_document.uri
     if task := ls.pending.pop(uri, None):

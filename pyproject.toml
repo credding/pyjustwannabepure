@@ -33,4 +33,15 @@ asyncio_mode = "auto"
 module-name = "justwannabepure"
 
 [tool.pyjustwannabepure]
-side_effects = ["jedi.*", "pygls.*", "importlib.metadata.*"]
+# pygls' position codec, URIs and text documents are plain value conversions.
+side_effects = [
+    "jedi.*",
+    "importlib.metadata.*",
+    "pygls.server.*",
+    "pygls.client.*",
+    "pygls.lsp.*",
+    "pygls.io_.*",
+    "pygls.protocol.*",
+    "pygls.progress.*",
+    "pygls.workspace.workspace.*",
+]

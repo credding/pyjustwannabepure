@@ -1,10 +1,15 @@
 import sys
 from pathlib import Path
 
+import pytest
 import pytest_lsp
 from lsprotocol import types
 from pygls.uris import from_fs_path
+from pygls.workspace import TextDocument
 from pytest_lsp import ClientServerConfig, LanguageClient
+
+from justwannabepure.lsp.checks import Issue, Position
+from justwannabepure.lsp.server import is_python_path, to_diagnostic
 
 ROOT = Path(__file__).parent
 
@@ -71,3 +76,34 @@ async def test_publishes_diagnostics(client: LanguageClient) -> None:
     )
     await client.wait_for_notification(types.TEXT_DOCUMENT_PUBLISH_DIAGNOSTICS)
     assert not client.diagnostics[uri]
+
+
+@pytest.mark.parametrize(
+    ("fs_path", "expected"),
+    [
+        ("/a/b.py", True),
+        ("/a/b.pyi", True),
+        ("/a/b.pyc", False),
+        ("/a/b.txt", False),
+        ("/a/py", False),
+    ],
+)
+def test_is_python_path(fs_path: str, expected: bool) -> None:
+    assert is_python_path(fs_path) is expected
+
+
+def test_to_diagnostic_converts_to_utf16() -> None:
+    doc = TextDocument("file:///a.py", "s = '😀'; roll()\n")
+    # Code points 10..16 (`roll()`) are UTF-16 units 11..17: the emoji is a surrogate pair.
+    issue = Issue("JWP002", "msg", Position(0, 10), Position(0, 16))
+    diagnostic = to_diagnostic(doc, issue)
+    assert diagnostic.range == types.Range(
+        start=types.Position(line=0, character=11),
+        end=types.Position(line=0, character=17),
+    )
+    assert (diagnostic.code, diagnostic.message, diagnostic.source) == (
+        "JWP002",
+        "msg",
+        "justwannabepure",
+    )
+    assert diagnostic.severity == types.DiagnosticSeverity.Error
