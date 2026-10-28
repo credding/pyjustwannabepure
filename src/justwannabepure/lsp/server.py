@@ -1,9 +1,11 @@
 """pygls wiring: re-run the inspections on open/change/save and publish diagnostics."""
 
+import ast
 import asyncio
 import logging
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,15 @@ from .resolve import Resolver
 DEBOUNCE_SECONDS = 0.3
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class Job:
+    """A document that is worth checking."""
+
+    module: ast.Module
+    source: str
+    path: Path
 
 
 class PurityServer(LanguageServer):
@@ -54,45 +65,77 @@ class PurityServer(LanguageServer):
     @side_effect
     def schedule(self, checks: dict[str, Coroutine[Any, Any, None]]) -> None:
         """Run each URI's check, cancelling the one already pending for it."""
+        for uri in checks.keys() & self.pending.keys():
+            self.pending.pop(uri).cancel()
         loop = asyncio.get_running_loop()
-        for uri, run in checks.items():
-            if task := self.pending.pop(uri, None):
-                task.cancel()
-            self.pending[uri] = loop.create_task(run)
+        self.pending.update({uri: loop.create_task(run) for uri, run in checks.items()})
 
     @side_effect
-    async def validate(self, uri: str, delay: float = 0.0) -> None:
-        if delay:
-            await asyncio.sleep(delay)
-        doc = self.workspace.get_text_document(uri)
-        source, fs_path = doc.source, to_fs_path(uri)
-        if fs_path is None or not is_python_path(fs_path):
-            return
-        path = Path(fs_path)
-        if (module := parse(source, path)) is None:
-            return  # keep the last good diagnostics while the user is mid-edit
+    async def on_worker[**P, T](
+        self, label: str, fn: Callable[P, T], *args: P.args, **kwargs: P.kwargs
+    ) -> T | None:
+        """Run `fn` on the check thread; `None`, logged, if it raises."""
         loop = asyncio.get_running_loop()
         try:
-            issues = await loop.run_in_executor(
-                self.executor, check, module, source, path, self.resolver, self.effects
+            return await loop.run_in_executor(
+                self.executor, lambda: fn(*args, **kwargs)
             )
         except Exception:
-            log.exception("check failed for %s", uri)
-            return
-        if doc.version != self.workspace.get_text_document(uri).version:
-            return  # stale: a newer check is already scheduled
-        self.text_document_publish_diagnostics(
-            types.PublishDiagnosticsParams(
-                uri=uri,
-                version=doc.version,
-                diagnostics=[to_diagnostic(doc, issue) for issue in issues],
-            )
-        )
+            log.exception("%s failed", label)
+            return None
+
+    @shell
+    async def validate(self, uri: str, delay: float = 0.0) -> None:
+        await asyncio.sleep(delay)
+        doc = self.workspace.get_text_document(uri)
+        match prepare(doc.source, to_fs_path(uri)):
+            case None:
+                return  # not Python, or mid-edit: keep the last good diagnostics
+            case Job(module=module, source=source, path=path):
+                issues = await self.on_worker(
+                    f"check of {uri}",
+                    check,
+                    module,
+                    source,
+                    path,
+                    self.resolver,
+                    self.effects,
+                )
+                latest = self.workspace.get_text_document(uri).version
+                match publication(uri, doc, latest, issues):
+                    case types.PublishDiagnosticsParams() as params:
+                        self.text_document_publish_diagnostics(params)
+                    case None:
+                        return  # the check failed, or a newer one is scheduled
 
 
 @pure
 def is_python_path(fs_path: str) -> bool:
     return fs_path.endswith((".py", ".pyi"))
+
+
+@pure
+def prepare(source: str, fs_path: str | None) -> Job | None:
+    """The job for a Python file that parses, else `None`."""
+    if fs_path is None or not is_python_path(fs_path):
+        return None
+    path = Path(fs_path)
+    module = parse(source, path)
+    return Job(module, source, path) if module is not None else None
+
+
+@pure
+def publication(
+    uri: str, doc: TextDocument, latest: int | None, issues: list[Issue] | None
+) -> types.PublishDiagnosticsParams | None:
+    """What to publish for `doc`, unless the check failed or the document has moved on."""
+    if issues is None or doc.version != latest:
+        return None
+    return types.PublishDiagnosticsParams(
+        uri=uri,
+        version=doc.version,
+        diagnostics=[to_diagnostic(doc, issue) for issue in issues],
+    )
 
 
 @pure

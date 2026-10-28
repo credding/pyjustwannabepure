@@ -23,6 +23,7 @@ from justwannabepure.lsp.resolve import (
     Definition,
     MarkerTable,
     Target,
+    cached,
     located_functions,
     target_from,
 )
@@ -294,3 +295,24 @@ def test_target_from_merges_markers_and_names() -> None:
 
 def test_target_from_nothing() -> None:
     assert target_from([], {}) == NOTHING
+
+
+TABLE = MarkerTable({1: ("f", {Marker.PURE})}, {"f": {Marker.PURE}})
+
+
+@pytest.mark.parametrize(
+    ("entry", "key", "expected"),
+    [
+        (None, 1, None),
+        ((1, TABLE), 1, TABLE),
+        ((1, TABLE), 2, None),
+        (("src", TABLE), "src", TABLE),
+        (("src", TABLE), "edited", None),
+        ((None, TABLE), None, TABLE),  # a file that still can't be stat'ed
+        ((None, TABLE), 1, None),
+    ],
+)
+def test_cached(
+    entry: tuple[object, MarkerTable] | None, key: object, expected: MarkerTable | None
+) -> None:
+    assert cached(entry, key) is expected

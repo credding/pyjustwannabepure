@@ -9,7 +9,13 @@ from pygls.workspace import TextDocument
 from pytest_lsp import ClientServerConfig, LanguageClient
 
 from justwannabepure.lsp.checks import Issue, Position
-from justwannabepure.lsp.server import is_python_path, to_diagnostic
+from justwannabepure.lsp.server import (
+    Job,
+    is_python_path,
+    prepare,
+    publication,
+    to_diagnostic,
+)
 
 ROOT = Path(__file__).parent
 
@@ -107,3 +113,47 @@ def test_to_diagnostic_converts_to_utf16() -> None:
         "justwannabepure",
     )
     assert diagnostic.severity == types.DiagnosticSeverity.Error
+
+
+@pytest.mark.parametrize(
+    ("source", "fs_path"),
+    [
+        ("x = 1\n", None),
+        ("x = 1\n", "/a/b.txt"),
+        ("def (:\n", "/a/b.py"),
+    ],
+)
+def test_prepare_skips(source: str, fs_path: str | None) -> None:
+    assert prepare(source, fs_path) is None
+
+
+def test_prepare_parses() -> None:
+    job = prepare("x = 1\n", "/a/b.pyi")
+    assert isinstance(job, Job)
+    assert (job.source, job.path) == ("x = 1\n", Path("/a/b.pyi"))
+    assert len(job.module.body) == 1
+
+
+ISSUE = Issue("JWP002", "msg", Position(0, 0), Position(0, 1))
+
+
+@pytest.mark.parametrize(
+    ("latest", "issues"),
+    [
+        (3, None),  # the check failed
+        (4, [ISSUE]),  # stale
+        (None, []),
+    ],
+)
+def test_publication_skips(latest: int | None, issues: list[Issue] | None) -> None:
+    doc = TextDocument("file:///a.py", "x\n", version=3)
+    assert publication("file:///a.py", doc, latest, issues) is None
+
+
+@pytest.mark.parametrize("issues", [[], [ISSUE, ISSUE]])
+def test_publication(issues: list[Issue]) -> None:
+    doc = TextDocument("file:///a.py", "x\n", version=3)
+    params = publication("file:///a.py", doc, 3, issues)
+    assert params is not None
+    assert (params.uri, params.version) == ("file:///a.py", 3)
+    assert params.diagnostics == [to_diagnostic(doc, issue) for issue in issues]
