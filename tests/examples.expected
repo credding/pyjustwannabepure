@@ -1,0 +1,15 @@
+examples/demo.py:20:1: JWP001 @pure function 'fetch' must not be async
+examples/demo.py:26:9: JWP002 @pure function 'score' calls @side_effect function 'now'
+examples/demo.py:27:9: JWP002 @pure function 'score' calls @side_effect function 'r'
+examples/demo.py:28:9: JWP002 @pure function 'score' calls @side_effect function 'effects.roll'
+examples/demo.py:29:9: JWP002 @pure function 'score' calls @side_effect function 'd.roll'
+examples/demo.py:30:18: JWP002 @pure function 'score' references @side_effect function 'r'
+examples/demo.py:31:5: JWP005 @pure function 'score' calls effectful 'builtins.print'
+examples/demo.py:40:5: JWP006 @pure function 'tally' must not use 'global'
+examples/demo.py:41:5: JWP007 @pure function 'tally' mutates its parameter 'counts'
+examples/demo.py:42:5: JWP008 @pure function 'tally' calls @shell function 'main'
+examples/demo.py:48:2: JWP004 'confused' cannot be both @pure and @side_effect
+examples/demo.py:56:5: JWP003 @shell function 'main' must not contain control flow ('for')
+examples/demo.py:58:5: JWP003 @shell function 'main' must not contain control flow ('try')
+examples/demo.py:61:9: JWP003 @shell function 'main' must not contain control flow ('raise')
+examples/demo.py:62:5: JWP003 @shell function 'main' must not contain control flow ('assert')

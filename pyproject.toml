@@ -31,3 +31,6 @@ asyncio_mode = "auto"
 
 [tool.uv.build-backend]
 module-name = "justwannabepure"
+
+[tool.pyjustwannabepure]
+side_effects = ["jedi.*", "pygls.*", "importlib.metadata.*"]

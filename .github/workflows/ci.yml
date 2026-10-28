@@ -17,5 +17,6 @@ jobs:
       - run: uv run ruff check src tests
       - run: uv run ruff format --check src tests
       - run: uv run ty check
+      - run: uv run pyjustwannabepure check src
       - run: uv run pytest
       - run: uv build
