@@ -110,6 +110,47 @@ def test_side_effect_outside_pure_is_fine(tmp_path: Path) -> None:
     assert run(tmp_path, source) == []
 
 
+def test_side_effect_calls_side_effect_and_shell(tmp_path: Path) -> None:
+    effects = """
+    @side_effect
+    def roll(): ...
+    """
+    source = """
+    from effects import roll
+
+    def helper(): ...
+
+    @shell
+    def main(): ...
+
+    class Dice:
+        @side_effect
+        def roll(self):
+            return roll()
+
+    @side_effect
+    def f(d: Dice):
+        helper()
+        print(d.roll())
+        main()
+        return list(map(roll, [1]))
+    """
+    issues = run(tmp_path, source, effects=effects)
+    assert codes(issues) == [
+        ("JWP009", 12),
+        ("JWP009", 17),
+        ("JWP010", 18),
+        ("JWP009", 19),
+    ]
+    assert issues[0].message == (
+        "@side_effect function 'roll' calls @side_effect function 'roll'"
+    )
+    assert issues[2].message == "@side_effect function 'f' calls @shell function 'main'"
+    assert issues[3].message == (
+        "@side_effect function 'f' references @side_effect function 'roll'"
+    )
+
+
 def test_pure_and_side_effect_conflict(tmp_path: Path) -> None:
     assert codes(run(tmp_path, "@pure\n@side_effect\ndef f(): ...\n")) == [
         ("JWP004", 2)
@@ -474,7 +515,7 @@ def test_open_buffer_line_drift(
 def test_unmarked_module_skips_resolution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Files without `@pure` references must not pay for a Jedi script or the marker table."""
+    """Files without `@pure` or `@side_effect` references must not pay for a Jedi script or the marker table."""
 
     def fail(*args: object) -> None:
         raise AssertionError("should not be called")

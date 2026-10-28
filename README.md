@@ -128,6 +128,10 @@ Marks a function that does something non-obvious: I/O, randomness, reading
 the clock, talking to the network. It works on methods too — `d.roll()` is
 caught when `roll` is a `@side_effect` method.
 
+A side effect is a leaf: it must not call (or pass around) another
+`@side_effect` function or a `@shell` function. Composing effects is the
+shell's job, so a side effect does exactly one thing.
+
 A function can't be both `@pure` and `@side_effect`.
 
 ### `@shell`
@@ -162,6 +166,8 @@ def main() -> None:
 | `JWP006` | `@pure` functions must not use `global`, or `nonlocal` outside a nested function                      |
 | `JWP007` | `@pure` functions must not mutate their parameters                                                    |
 | `JWP008` | `@pure` functions must not call `@shell` functions                                                    |
+| `JWP009` | `@side_effect` functions must not call or pass around other `@side_effect` functions                  |
+| `JWP010` | `@side_effect` functions must not call or pass around `@shell` functions                              |
 
 ### Ignoring a line
 

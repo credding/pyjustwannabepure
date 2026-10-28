@@ -49,6 +49,12 @@ def tally(counts: dict[str, int], key: str) -> int:
 def confused() -> None: ...
 
 
+@side_effect
+def announce() -> None:
+    print(r(6))  # JWP009
+    main()  # JWP010
+
+
 @shell
 def main() -> None:
     x = score(Dice()) if True else 0  # fine: ternary

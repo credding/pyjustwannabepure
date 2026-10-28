@@ -67,23 +67,28 @@ def test_local_issues(source: str, expected: list[tuple[str, int]]) -> None:
     assert local(source) == expected
 
 
-def test_references_only_from_pure_functions() -> None:
+def test_references_from_pure_and_side_effect_functions() -> None:
     found = refs(
         """
         @pure
         def f(xs):
             return map(g, xs) + h()
 
+        @side_effect
+        def e():
+            return h()
+
         @shell
         def s():
             return h()
         """
     )
-    assert [(r.function, ast.unparse(r.expr), r.called) for r in found] == [
-        ("f", "map", True),
-        ("f", "g", False),
-        ("f", "xs", False),
-        ("f", "h", True),
+    assert [(r.function, r.role, ast.unparse(r.expr), r.called) for r in found] == [
+        ("f", Marker.PURE, "map", True),
+        ("f", Marker.PURE, "g", False),
+        ("f", Marker.PURE, "xs", False),
+        ("f", Marker.PURE, "h", True),
+        ("e", Marker.SIDE_EFFECT, "h", True),
     ]
 
 
@@ -149,14 +154,44 @@ def test_reference_issues(
 ) -> None:
     module, source = parse("@pure\ndef f():\n    g()\n")
     expr = ast.parse("g", mode="eval").body
-    ref = Reference("f", ast.copy_location(expr, module.body[-1]), called)
+    ref = Reference("f", Marker.PURE, ast.copy_location(expr, module.body[-1]), called)
     issues = reference_issues([ref], [resolved], effects, _Locator(source))
+    assert [(i.code, i.message.split()[3]) for i in issues] == expected
+
+
+@pytest.mark.parametrize(
+    ("called", "resolved", "expected"),
+    [
+        (True, NOTHING, []),
+        (True, target(Marker.PURE), []),
+        (True, target(Marker.SIDE_EFFECT), [("JWP009", "calls")]),
+        (False, target(Marker.SIDE_EFFECT), [("JWP009", "references")]),
+        (True, target(Marker.SHELL), [("JWP010", "calls")]),
+        (False, target(Marker.SHELL), [("JWP010", "references")]),
+        (
+            True,
+            target(Marker.SIDE_EFFECT, Marker.SHELL),
+            [("JWP009", "calls"), ("JWP010", "calls")],
+        ),
+        # Side effects may use effectful builtins and stdlib: that's their job.
+        (True, target(names=("builtins.print",)), []),
+    ],
+)
+def test_side_effect_reference_issues(
+    called: bool, resolved: Target, expected: list[tuple[str, str]]
+) -> None:
+    module, source = parse("@side_effect\ndef f():\n    g()\n")
+    expr = ast.parse("g", mode="eval").body
+    ref = Reference(
+        "f", Marker.SIDE_EFFECT, ast.copy_location(expr, module.body[-1]), called
+    )
+    issues = reference_issues([ref], [resolved], BUILTIN_EFFECTS, _Locator(source))
     assert [(i.code, i.message.split()[3]) for i in issues] == expected
 
 
 def test_reference_issues_names_lowest_effect() -> None:
     _, source = parse("")
-    ref = Reference("f", ast.parse("x", mode="eval").body, True)
+    ref = Reference("f", Marker.PURE, ast.parse("x", mode="eval").body, True)
     [issue] = reference_issues(
         [ref],
         [target(names=("time.time", "builtins.print"))],
@@ -167,7 +202,7 @@ def test_reference_issues_names_lowest_effect() -> None:
 
 
 def test_reference_issues_lengths_must_match() -> None:
-    ref = Reference("f", ast.parse("x", mode="eval").body, True)
+    ref = Reference("f", Marker.PURE, ast.parse("x", mode="eval").body, True)
     with pytest.raises(ValueError):
         reference_issues([ref], [], BUILTIN_EFFECTS, _Locator(""))
 

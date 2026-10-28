@@ -10,6 +10,8 @@
 | JWP006 | `@pure` uses `global`, or `nonlocal` outside a nested function    | Pass the state in and return the new state.                                                                                                               |
 | JWP007 | `@pure` mutates a parameter                                       | Build and return a new value (`[*xs, x]`, `{**d, k: v}`, `dataclasses.replace(obj, ...)`). Copying first (`xs = list(xs)`) and mutating the copy is fine. |
 | JWP008 | `@pure` calls a `@shell` function                                 | The dependency is backwards: shells call pure code, never the reverse. Extract the logic the pure function needs into another `@pure` function.             |
+| JWP009 | `@side_effect` calls or passes around another `@side_effect`      | Side effects are leaves. Move the composition into a `@shell` that calls each effect in turn and passes results between them. If the inner call is just a helper, inline it or leave the helper undecorated. |
+| JWP010 | `@side_effect` calls or passes around a `@shell` function         | The dependency is backwards: shells call side effects, never the reverse. Have the caller be (or move into) a `@shell` that calls both.                   |
 
 If a diagnostic is a false positive (the call really is pure), suppress it on
 that line with `# jwp: ignore[JWPxxx]` and add a comment saying why.

@@ -1,6 +1,6 @@
 ---
 name: pyjustwannabepure
-description: Writes and refactors Python as a functional core and imperative shell using the justwannabepure decorators (@pure, @shell, @side_effect), verified with `pyjustwannabepure check`. Use when writing new Python code in a project that uses pyjustwannabepure, when the user asks to refactor code toward functional core / imperative shell, or when fixing JWP001-JWP008 diagnostics.
+description: Writes and refactors Python as a functional core and imperative shell using the justwannabepure decorators (@pure, @shell, @side_effect), verified with `pyjustwannabepure check`. Use when writing new Python code in a project that uses pyjustwannabepure, when the user asks to refactor code toward functional core / imperative shell, or when fixing JWP001-JWP010 diagnostics.
 ---
 
 # pyjustwannabepure
@@ -25,7 +25,8 @@ The import name differs from the package name:
 ## The three roles
 
 - **`@side_effect`**: touches the outside world. I/O, files, network, DB,
-  env vars, clock, randomness. Keep these small and dumb.
+  env vars, clock, randomness. Keep these small and dumb: a side effect never
+  calls another side effect or a shell.
 - **`@shell`**: glue. Calls side effects, hands their results to pure code,
   and passes the output on to more side effects. It makes no decisions.
 - **`@pure`**: everything else. Values in, values out. This is where the
@@ -72,6 +73,8 @@ Preserve behavior, and don't let the refactor spread into neighboring code.
 - `@shell` must not contain `if`, `match` (except type narrowing), `try`,
   `for`, `while`, `raise` or `assert`. Comprehensions and ternaries are fine.
 - `@pure` must not mutate its parameters. Return new values instead.
+- `@side_effect` must not call other `@side_effect` or `@shell` functions.
+  Compose effects in a shell.
 - Third-party or project effects you can't decorate go in `pyproject.toml`:
 
   ```toml

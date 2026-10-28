@@ -247,11 +247,16 @@ def parse(source: str, path: Path) -> ast.Module | None:
 
 @dataclass(frozen=True)
 class Reference:
-    """A callee or a name passed around as a value inside a `@pure` function."""
+    """A callee or a name passed around as a value inside a `@pure` or `@side_effect` function."""
 
-    function: str  # the `@pure` function's name
+    function: str  # the referencing function's name
+    role: Marker  # its marker: PURE or SIDE_EFFECT
     expr: ast.expr
     called: bool
+
+
+# Markers whose functions restrict what they may reference.
+_REFERENCING = (Marker.PURE, Marker.SIDE_EFFECT)
 
 
 @pure
@@ -259,9 +264,10 @@ def references_to_resolve(
     functions: list[tuple[FunctionNode, set[Marker]]],
 ) -> list[Reference]:
     return [
-        Reference(fn.name, expr, called)
+        Reference(fn.name, role, expr, called)
         for fn, markers in functions
-        if Marker.PURE in markers
+        for role in _REFERENCING
+        if role in markers
         for expr, called in _references(fn)
     ]
 
@@ -337,37 +343,44 @@ def local_issues(
     return issues
 
 
+# (caller role, callee marker) -> code
+_FORBIDDEN_CALLS: dict[tuple[Marker, Marker], str] = {
+    (Marker.PURE, Marker.SIDE_EFFECT): "JWP002",
+    (Marker.PURE, Marker.SHELL): "JWP008",
+    (Marker.SIDE_EFFECT, Marker.SIDE_EFFECT): "JWP009",
+    (Marker.SIDE_EFFECT, Marker.SHELL): "JWP010",
+}
+
+
 @pure
 def reference_issues(
     refs: list[Reference], targets: list[Target], effects: Effects, loc: _Locator
 ) -> list[Issue]:
-    """JWP002, JWP005 and JWP008, from each reference and what it resolved to."""
+    """JWP002, JWP005, JWP008, JWP009 and JWP010, from each reference and what it resolved to."""
     issues: list[Issue] = []
     for ref, target in zip(refs, targets, strict=True):
         verb = "calls" if ref.called else "references"
         name = ast.unparse(ref.expr)
-        if Marker.SIDE_EFFECT in target.markers:
-            issues.append(
-                Issue(
-                    "JWP002",
-                    f"@pure function '{ref.function}' {verb} @side_effect function '{name}'",
-                    *loc.span(ref.expr),
+        caller = f"@{ref.role.value} function '{ref.function}'"
+        for callee in (Marker.SIDE_EFFECT, Marker.SHELL):
+            if callee in target.markers and (
+                code := _FORBIDDEN_CALLS.get((ref.role, callee))
+            ):
+                issues.append(
+                    Issue(
+                        code,
+                        f"{caller} {verb} @{callee.value} function '{name}'",
+                        *loc.span(ref.expr),
+                    )
                 )
-            )
-        if Marker.SHELL in target.markers:
-            issues.append(
-                Issue(
-                    "JWP008",
-                    f"@pure function '{ref.function}' {verb} @shell function '{name}'",
-                    *loc.span(ref.expr),
-                )
-            )
+        if ref.role is not Marker.PURE:
+            continue
         full_names = target.full_names if ref.called else target.function_names
         if effectful := min(filter(effects, full_names), default=None):
             issues.append(
                 Issue(
                     "JWP005",
-                    f"@pure function '{ref.function}' {verb} effectful '{effectful}'",
+                    f"{caller} {verb} effectful '{effectful}'",
                     *loc.span(ref.expr),
                 )
             )

@@ -9,7 +9,9 @@ examples/demo.py:40:5: JWP006 @pure function 'tally' must not use 'global'
 examples/demo.py:41:5: JWP007 @pure function 'tally' mutates its parameter 'counts'
 examples/demo.py:42:5: JWP008 @pure function 'tally' calls @shell function 'main'
 examples/demo.py:48:2: JWP004 'confused' cannot be both @pure and @side_effect
-examples/demo.py:56:5: JWP003 @shell function 'main' must not contain control flow ('for')
-examples/demo.py:58:5: JWP003 @shell function 'main' must not contain control flow ('try')
-examples/demo.py:61:9: JWP003 @shell function 'main' must not contain control flow ('raise')
-examples/demo.py:62:5: JWP003 @shell function 'main' must not contain control flow ('assert')
+examples/demo.py:54:11: JWP009 @side_effect function 'announce' calls @side_effect function 'r'
+examples/demo.py:55:5: JWP010 @side_effect function 'announce' calls @shell function 'main'
+examples/demo.py:62:5: JWP003 @shell function 'main' must not contain control flow ('for')
+examples/demo.py:64:5: JWP003 @shell function 'main' must not contain control flow ('try')
+examples/demo.py:67:9: JWP003 @shell function 'main' must not contain control flow ('raise')
+examples/demo.py:68:5: JWP003 @shell function 'main' must not contain control flow ('assert')
