@@ -14,6 +14,7 @@ pyjustwannabepure = "justwannabepure.cli:main"
 
 [dependency-groups]
 dev = [
+    "mypy>=2.4.1",
     "pytest>=8",
     "pytest-asyncio>=0.23",
     "pytest-lsp>=1",
