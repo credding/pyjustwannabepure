@@ -21,7 +21,8 @@ from justwannabepure import pure, shell, side_effect
 
 from .checks import Issue, check, parse
 from .effects import Effects, load_effects
-from .resolve import Resolver
+from .interface import interface_digest
+from .resolve import Resolver, read_text
 
 DEBOUNCE_SECONDS = 0.3
 
@@ -52,6 +53,13 @@ class PurityServer(LanguageServer):
             max_workers=1, thread_name_prefix="jwp-check"
         )
         self.pending: dict[str, asyncio.Task[None]] = {}
+        # Interface digests (see `interface.py`), by URI:
+        # - `saved`: each open document's file on disk, as Jedi reads it;
+        # - `buffers`: each open document's editor text, by version, which the markers come from;
+        # - `seen`: what each document's last check saw of the others, as (buffer, saved).
+        self.saved: dict[str, str] = {}
+        self.buffers: dict[str, tuple[int | None, str]] = {}
+        self.seen: dict[str, dict[str, View]] = {}
 
     @side_effect
     def open_source(self, path: Path) -> str | None:
@@ -61,6 +69,17 @@ class PurityServer(LanguageServer):
     @side_effect
     def workspace_root(self) -> Path:
         return Path(self.workspace.root_path or Path.cwd())
+
+    @shell
+    def buffer_digests(self) -> dict[str, str]:
+        """The interface digest of each open Python document's text, recomputed when its version moves."""
+        docs = self.workspace.text_documents
+        self.buffers = {
+            uri: buffer_digest(self.buffers.get(uri), doc.version, doc.source)
+            for uri, doc in docs.items()
+            if is_python_path(uri)
+        }
+        return {uri: digest for uri, (_, digest) in self.buffers.items()}
 
     @side_effect
     def schedule(self, checks: dict[str, Coroutine[Any, Any, None]]) -> None:
@@ -92,6 +111,7 @@ class PurityServer(LanguageServer):
             case None:
                 return  # not Python, or mid-edit: keep the last good diagnostics
             case Job(module=module, source=source, path=path):
+                self.seen[uri] = views(uri, self.buffer_digests(), self.saved)
                 issues = await self.on_worker(
                     f"check of {uri}",
                     check,
@@ -112,6 +132,46 @@ class PurityServer(LanguageServer):
 @pure
 def is_python_path(fs_path: str) -> bool:
     return fs_path.endswith((".py", ".pyi"))
+
+
+# Another document's interface as one check saw it: (editor buffer, file on disk).
+type View = tuple[str, str | None]
+
+
+@pure
+def buffer_digest(
+    entry: tuple[int | None, str] | None, version: int | None, source: str
+) -> tuple[int | None, str]:
+    """`entry` if it is for `version`, else a fresh (version, digest)."""
+    if entry is not None and entry[0] == version:
+        return entry
+    return version, interface_digest(source)
+
+
+@pure
+def views(uri: str, buffers: dict[str, str], saved: dict[str, str]) -> dict[str, View]:
+    """What a check of `uri` sees of every other open document."""
+    return {
+        other: (digest, saved.get(other))
+        for other, digest in buffers.items()
+        if other != uri
+    }
+
+
+@pure
+def stale_after_save(
+    uri: str, digest: str, open_uris: list[str], seen: dict[str, dict[str, View]]
+) -> list[str]:
+    """The documents to recheck once `uri` is saved with interface `digest`.
+
+    `uri` itself, and every document whose last check saw a different
+    interface for it, in the buffer or on disk, or never saw it at all.
+    """
+    return [
+        other
+        for other in open_uris
+        if other == uri or seen.get(other, {}).get(uri) != (digest, digest)
+    ]
 
 
 @pure
@@ -168,6 +228,8 @@ def initialized(ls: PurityServer, params: types.InitializedParams) -> None:
 @shell
 def did_open(ls: PurityServer, params: types.DidOpenTextDocumentParams) -> None:
     uri = params.text_document.uri
+    # From disk: a restored editor buffer may not match the file Jedi reads.
+    ls.saved[uri] = interface_digest(read_text(Path(to_fs_path(uri) or "")))
     ls.schedule({uri: ls.validate(uri)})
 
 
@@ -181,14 +243,21 @@ def did_change(ls: PurityServer, params: types.DidChangeTextDocumentParams) -> N
 @server.feature(types.TEXT_DOCUMENT_DID_SAVE)
 @shell
 def did_save(ls: PurityServer, params: types.DidSaveTextDocumentParams) -> None:
-    # A marker added or removed in one module can change diagnostics in any other.
-    ls.schedule({uri: ls.validate(uri) for uri in ls.workspace.text_documents})
+    # A marker or a signature changed in one module can change diagnostics in
+    # any other, but a body-only edit can't.
+    uri = params.text_document.uri
+    digest = interface_digest(ls.workspace.get_text_document(uri).source)
+    ls.saved[uri] = digest
+    stale = stale_after_save(uri, digest, list(ls.workspace.text_documents), ls.seen)
+    ls.schedule({other: ls.validate(other) for other in stale})
 
 
 @server.feature(types.TEXT_DOCUMENT_DID_CLOSE)
 @side_effect
 def did_close(ls: PurityServer, params: types.DidCloseTextDocumentParams) -> None:
     uri = params.text_document.uri
+    ls.saved.pop(uri, None)
+    ls.seen.pop(uri, None)
     if task := ls.pending.pop(uri, None):
         task.cancel()
     ls.text_document_publish_diagnostics(
